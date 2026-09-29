@@ -29,7 +29,7 @@ cd IVY && xcodebuild -project IVY.xcodeproj -scheme IVY -configuration Debug bui
 ~/Library/Application\ Support/IVY/Runtime/venv/bin/python3 IVY/IVY/Resources/Engine/ivy_engine.py --role doctor
 ```
 
-Debug builds include `DebugBridge` (distributed notification `com.ravoxx.IVY.debug`) for driving the UI without a keyboard: `submit`, `text`, `dashboard`, `dismiss`, `settings`, `audio`. It isn't compiled into Release builds.
+Debug builds include `DebugBridge` (distributed notification `com.ravoxx.IVY.debug`) for driving the UI without a keyboard: `submit`, `text`, `dashboard`, `dismiss`, `settings`, `audio`, and `demo scene=<reminders|music|listening|typing|claude|dashboard|shelf|live>` (sample content for README screenshots in `docs/screenshots/`). It isn't compiled into Release builds.
 
 ## Conventions
 

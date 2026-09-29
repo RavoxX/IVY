@@ -20,11 +20,23 @@
 
 ## Screenshots
 
-| Assistant | Dashboard | Shelf |
-| --- | --- | --- |
-| *Answer panel growing out of the notch* | *Hover: media player, battery, settings* | *Drop files, AirDrop them* |
+<p align="center">
+  <img src="docs/screenshots/reminders.png" alt="IVY answering “What's on my to-do list for today?” with three reminders" width="32%">
+  <img src="docs/screenshots/music.png" alt="IVY playing Billie Jean with the Spotify playback card" width="32%">
+  <img src="docs/screenshots/dashboard.png" alt="Hover dashboard with media player, battery and quick actions" width="32%">
+</p>
 
-<!-- Add screenshots to docs/ and reference them here. -->
+| Closed notch while music plays | Listening | Typing |
+| --- | --- | --- |
+| ![Album art and audio bars in the closed notch](docs/screenshots/live.png) | ![IVY listening to a spoken question](docs/screenshots/listening.png) | ![Typing a question into IVY](docs/screenshots/typing.png) |
+
+| Timer | Weather | Claude Code |
+| --- | --- | --- |
+| ![A 25-minute pasta timer counting down](docs/screenshots/timer.png) | ![Current weather in Berlin](docs/screenshots/weather.png) | ![Claude Code building a personal website in the background](docs/screenshots/claude.png) |
+
+| File shelf with AirDrop |
+| --- |
+| ![Drag-and-drop file shelf with an AirDrop target](docs/screenshots/shelf.png) |
 
 ## Requirements
 

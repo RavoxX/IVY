@@ -28,6 +28,8 @@ final class NotchViewModel: ObservableObject {
     @Published var isHovering = false
     @Published var isDropTargeted = false
     @Published private(set) var errorAction: ErrorAction?
+    /// Debug builds: keeps the dashboard open for README screenshots.
+    var isPinnedForDemo = false
 
     enum ErrorAction: Equatable { case openSettings(String?), openPrivacy(PermissionService.Pane) }
 
@@ -329,7 +331,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     func closeDashboard() {
-        guard mode == .dashboard, !isDropTargeted else { return }
+        guard mode == .dashboard, !isDropTargeted, !isPinnedForDemo else { return }
         env.battery.setVisible(false)
         env.music.endLiveUpdates()
         mode = .closed
@@ -418,7 +420,7 @@ final class NotchViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    private func cancelCollapse() {
+    func cancelCollapse() {
         collapseWork?.cancel()
         collapseWork = nil
     }
@@ -547,3 +549,24 @@ final class NotchViewModel: ObservableObject {
         dismiss()
     }
 }
+
+#if DEBUG
+extension NotchViewModel {
+    /// Debug-only: shows a fixed state (used to take README screenshots with sample data).
+    func presentDemo(query: String, answer: String, cards: [ResultCard], phase: AssistantPhase,
+                     workingLabel: String? = nil, typedText: String = "", audioLevel: Float = 0) {
+        cancelCollapse()
+        runID = UUID()
+        if mode == .dashboard { closeDashboard() }
+        mode = .assistant
+        self.query = query
+        self.answer = answer
+        self.cards = cards
+        self.phase = phase
+        self.workingLabel = workingLabel
+        self.workingDone = workingLabel != nil
+        self.typedText = typedText
+        self.audioLevel = audioLevel
+    }
+}
+#endif
