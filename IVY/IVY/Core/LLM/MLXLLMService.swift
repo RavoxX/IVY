@@ -10,10 +10,13 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     private let engine = EngineProcess(role: "llm")
     private let settings: SettingsStore
     private let governor: EnergyGovernor
+    /// Which setting picks the model: the main model, or the optional writing model.
+    private let modelKey: SettingsKey
 
-    init(settings: SettingsStore, governor: EnergyGovernor) {
+    init(settings: SettingsStore, governor: EnergyGovernor, modelKey: SettingsKey = .llmModelID) {
         self.settings = settings
         self.governor = governor
+        self.modelKey = modelKey
     }
 
     /// Re-applies the idle timeout (the energy policy can shorten it while the engine runs).
@@ -22,13 +25,13 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     }
 
     var descriptor: ModelDescriptor {
-        ModelCatalog.descriptor(id: settings.string(.llmModelID)).flatMap { $0.kind == .llm ? $0 : nil }
+        ModelCatalog.descriptor(id: settings.string(modelKey)).flatMap { $0.kind == .llm ? $0 : nil }
             ?? ModelCatalog.defaultLLM
     }
 
-    /// A custom model path (Settings → AI → Model path) overrides the catalog model.
+    /// A custom model path (Settings → AI → Model path) overrides the main catalog model.
     var modelDirectory: URL {
-        let custom = settings.string(.llmModelPath)
+        let custom = modelKey == .llmModelID ? settings.string(.llmModelPath) : ""
         if !custom.isEmpty { return URL(fileURLWithPath: (custom as NSString).expandingTildeInPath) }
         return descriptor.directory(in: settings.modelsFolder)
     }

@@ -10,6 +10,10 @@ final class AppEnvironment {
     let history = HistoryStore(fileURL: AppPaths.historyFile)
     let runtime: RuntimeManager
     let llm: MLXLLMService
+    /// Optional second model for writing answers (web search, clipboard); see Settings ▸ AI.
+    let writerLLM: MLXLLMService
+    let phrases = PhraseMemory(fileURL: AppPaths.applicationSupport.appendingPathComponent("learned-phrases.json"))
+    let nudges: NudgeService
     let whisper: LocalWhisperService
     let tts: KokoroMLXTTSService
     let spotify = SpotifyService()
@@ -39,9 +43,12 @@ final class AppEnvironment {
     init() {
         runtime = RuntimeManager(settings: settings)
         llm = MLXLLMService(settings: settings, governor: governor)
+        writerLLM = MLXLLMService(settings: settings, governor: governor, modelKey: .writingModelID)
         whisper = LocalWhisperService(settings: settings, governor: governor)
         tts = KokoroMLXTTSService(settings: settings, governor: governor)
-        textService = LLMTextService(llm: llm, settings: settings)
+        let activeWriter = Self.activeWriter(settings: settings, writer: writerLLM)
+        textService = LLMTextService(main: llm, writer: activeWriter, settings: settings)
+        nudges = NudgeService(settings: settings, calendar: calendar, energy: energy, focus: focus)
         glance = GlanceService(settings: settings, reminders: reminders, calendar: calendar, mail: mail,
                                focus: focus, energy: energy)
         music = MusicController(spotify: spotify)
@@ -61,15 +68,19 @@ final class AppEnvironment {
                 guard settings.bool(.focusAwareReplies), let name = focus.activeName else { return nil }
                 return FocusParser.replyGuidance(for: name)
             },
+            writer: activeWriter,
+            phrases: phrases,
             confirm: { [weak self] request in
                 guard let self else { return false }
                 return await self.notch.requestConfirmation(request)
             })
         notch = NotchViewModel(env: self)
 
-        runtime.unloadBeforeDelete = { [llm, whisper, tts] kind in
+        runtime.unloadBeforeDelete = { [llm, writerLLM, whisper, tts] kind in
             switch kind {
-            case .llm: await llm.unloadModel()
+            case .llm:
+                await llm.unloadModel()
+                await writerLLM.unloadModel()
             case .whisper: await whisper.unload()
             case .kokoro: await tts.unload()
             }
@@ -80,6 +91,18 @@ final class AppEnvironment {
         // Warm the Shortcuts list so the model knows the user's Home shortcuts by name.
         let shortcutsService = self.shortcutsService
         Task.detached(priority: .utility) { _ = await shortcutsService.list() }
+        nudges.onNudge = { [weak self] nudge in self?.notch.showNudge(nudge) }
+        nudges.start()
+    }
+
+    /// The writing model, when one is chosen, differs from the main model and is downloaded.
+    static func activeWriter(settings: SettingsStore, writer: MLXLLMService) -> @Sendable () -> MLXLLMService? {
+        {
+            let id = settings.string(.writingModelID)
+            guard !id.isEmpty, id != settings.string(.llmModelID) || !settings.string(.llmModelPath).isEmpty,
+                  writer.isAvailable else { return nil }
+            return writer
+        }
     }
 
     /// Hot, Low Power Mode or low battery: unload idle models sooner (or now, if critical).
@@ -91,13 +114,15 @@ final class AppEnvironment {
         case .unloadNow: governor.setCap(minutes: 1)
         }
         let busy = notch?.isBusy ?? false
-        Task { [llm, whisper, tts] in
+        Task { [llm, writerLLM, whisper, tts] in
             if enabled, policy == .unloadNow, !busy {
                 await llm.unloadModel()
+                await writerLLM.unloadModel()
                 await whisper.unload()
                 await tts.unload()
             } else {
                 await llm.applyIdleTimeout()
+                await writerLLM.applyIdleTimeout()
                 await whisper.applyIdleTimeout()
                 await tts.applyIdleTimeout()
             }

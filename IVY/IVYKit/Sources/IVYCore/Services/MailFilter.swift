@@ -31,6 +31,21 @@ public enum MailFilter {
             .sorted { $0.date > $1.date }
     }
 
+    /// Different people matched a name ("Alex" → Alex Kim, Alex Meyer): ask which one.
+    /// Returns the distinct sender names when there's more than one, else nil.
+    public static func ambiguousSenders(in items: [MailMessageItem], for sender: String) -> [String]? {
+        var names: [String] = []
+        for item in items {
+            let name = item.senderName
+            if !names.contains(where: { fold($0) == fold(name) }) { names.append(name) }
+        }
+        // Typing the full name ("alex kim") settles it even if a display name varies slightly.
+        guard names.count > 1, !names.contains(where: { fold($0).trimmingCharacters(in: .whitespaces) == fold(sender).trimmingCharacters(in: .whitespaces) }) else {
+            return nil
+        }
+        return Array(names.prefix(3))
+    }
+
     public static func summary(for items: [MailMessageItem], from sender: String?, query: String?, unreadOnly: Bool) -> String {
         let noun = unreadOnly ? "unread email" : "email"
         var scope = ""

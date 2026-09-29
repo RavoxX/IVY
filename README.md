@@ -19,6 +19,8 @@
 - 🏠 **Home & Focus via Shortcuts** — “Lights to 50%”, “Set my focus to sleeping”; IVY creates the Focus shortcuts for you (in your system language), and replies adapt to the active Focus. “Turn on Low Power Mode” works too (macOS asks for your password).
 - 🔋 **Energy awareness** — battery health, cycles, temperature and charging advice; models unload sooner when the Mac is hot or low on battery.
 - 🔗 **Chained commands** — “Remind me tomorrow at 9 to call Alex, and put it in my calendar too” runs both tools.
+- 🎯 **Accuracy helpers** — IVY asks “Which Alex?” instead of guessing, checks that actions really happened, and learns what you meant when you rephrase a request that didn't work.
+- 🔔 **Notices** — “Standup in 10 min”, “Battery at 15%” pop out of the notch on their own.
 - 👩‍💻 **Claude Code** — open an interactive Claude Code (or Codex) session, or start one on a task.
 - 🪄 **Notch dashboard** — hover the notch for a media player with a seekable progress bar, today at a glance (reminders, next event, unread mail, Focus, battery), a drag-and-drop file shelf with AirDrop, and history (inspired by [boring.notch](https://github.com/TheBoredTeam/boring.notch)).
 - 🔒 **Private by default** — no cloud AI, no telemetry, no stored audio.
@@ -198,7 +200,11 @@ typed text ───────────────────────
 
 - **CommandRouter** handles unambiguous commands (“pause”, “open Safari”, “open IVY settings”, “remind me…”, timers, math) without the model: instant, and works while the model loads.
 - An **action-claim guard** stops the model from saying it did something (“I opened Chrome…”) without calling a tool. It re-prompts once, then answers honestly that it can't.
-- Everything else goes to **Qwen3-4B**, which picks tools through its native `<tool_call>` format. Tool results go back to the model for a one-sentence answer, or are shown directly when the tool's summary already is the answer.
+- **Learned phrases** come first: when a request fails (or gets a text-only answer) and you rephrase it within a minute, the tool call that worked is remembered for your original words and runs directly next time. Nothing time-dependent or high-risk is learned; the list is in Settings ▸ Advanced.
+- Everything else goes to **Qwen3-4B**, which picks tools through its native `<tool_call>` format. The request line carries a short **“likely tools” hint** from keywords (mail → `mail_search`), which steers small models without changing the cached tool list. Tool results go back to the model for a one-sentence answer, or are shown directly when the tool's summary already is the answer.
+- **Ambiguity is a question, not a guess**: when several people, reminders or shortcuts match (“Alex” → Alex Kim / Alex Meyer), the tool asks which one, the notch stays open with the text field ready, and your reply continues the conversation.
+- **Actions are verified**: calendar events and reminders are read back after saving, volume/mute and dark mode are re-read, Focus is checked after the shortcut runs (with Full Disk Access), Spotify verifies the song that actually started, and Low Power Mode is re-checked.
+- An optional **writing model** (Settings ▸ AI) writes web answers, clipboard rewrites and dictionary lists, e.g. Qwen3 14B, while the main model stays small and fast for commands. Clipboard results stream into their card as they're written.
 - The model never gets a shell. Tools take **validated, structured arguments**.
 
 ### The notch animation
@@ -211,7 +217,7 @@ MLX's most mature LLM, Whisper and Kokoro implementations are Python packages, s
 
 - One process per role (`llm`, `stt`, `tts`), started lazily and talking **JSON Lines over stdin/stdout**. There's no server and no port, and the user never starts anything manually.
 - Engines unload after inactivity (Settings ▸ AI), which frees all model memory.
-- The LLM role keeps a **prompt-prefix KV cache**: the system prompt and tool schemas are prefilled once, so follow-up requests reach the first token in ~0.15 s on an M5.
+- The LLM role keeps a **prompt-prefix KV cache**: the system prompt and tool schemas are prefilled once, so follow-up requests reach the first token in ~0.15 s on an M5. IVY **warms this cache as soon as you start talking or typing**, so even the first request after the model loads doesn't wait for the ~5k-token tool list.
 - Runs with `HF_HUB_OFFLINE=1`: models load only from local folders.
 
 ### Changing the model
@@ -245,6 +251,8 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 **Home, Focus & Shortcuts** — macOS apps can't use HomeKit or switch Focus directly, so IVY runs *your* Shortcuts (`/usr/bin/shortcuts`, by identifier, arguments as an array). Make shortcuts for scenes and devices (“Lights”, “Set Thermostat”); IVY passes values like “50” as the shortcut input. For **Focus**, IVY makes the shortcut itself the first time you ask (“Set my focus to sleeping”): it generates a one-action Set Focus shortcut named after the mode in your system language (Set Focus finds modes by their displayed name, e.g. “Nicht stören”), has macOS sign it (`shortcuts sign`, which contacts Apple's signing service), and opens Shortcuts' **Add Shortcut** sheet. Once you click Add, IVY runs it right away and reuses it from then on. Nothing is added without that click. “Create a shortcut for my Sleep focus” only sets it up. **Low Power Mode** can't be set by Shortcuts on the Mac, so IVY runs the fixed command `pmset -a lowpowermode 1|0` through macOS's administrator prompt. Reading the active Focus needs Full Disk Access (it's stored in `~/Library/DoNotDisturb`). With it, replies adapt (Work → brief and professional, Sleep/Do Not Disturb → shortest possible, no sounds or spoken answers). Shortcuts whose names suggest locks, doors, alarms, payments or messages always ask first.
 
 **Energy** — battery health, cycle count and temperature come from IOKit (`AppleSmartBattery`), thermal state and Low Power Mode from `ProcessInfo`; updates are event-driven. When the Mac is hot, in Low Power Mode or low on battery, idle models unload after 2–3 minutes, or immediately when critical (Settings ▸ AI ▸ Energy).
+
+**Notices** — `NudgeService` pops short notices out of the notch: your next calendar event 10 minutes before it starts (one timer, replanned when the calendar changes; silent during Sleep/Do Not Disturb), battery at 15% on battery power, and a very hot Mac. It never interrupts a running request and can be turned off in Settings ▸ General.
 
 **Chained commands** — sentences that ask for several actions skip the instant-command path; the model calls one tool per part (it may emit several `<tool_call>` blocks) and IVY reports every result.
 

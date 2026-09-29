@@ -130,6 +130,10 @@ final class CalendarService: @unchecked Sendable {
         event.location = location
         if !allDay { event.addAlarm(EKAlarm(relativeOffset: -600)) }
         try store.save(event, span: .thisEvent, commit: true)
+        // Read it back so IVY only reports what's really in the calendar.
+        guard let identifier = event.eventIdentifier, store.event(withIdentifier: identifier) != nil else {
+            throw ToolError.failed("The calendar didn't keep the event.")
+        }
         Log.tools.info("Created calendar event")
         return CalendarEventItem(id: event.eventIdentifier ?? UUID().uuidString, title: title, start: event.startDate,
                                  end: event.endDate, isAllDay: allDay, calendar: calendar.title, location: location)

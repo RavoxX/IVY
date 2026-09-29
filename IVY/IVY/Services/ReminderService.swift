@@ -76,6 +76,9 @@ final class ReminderService: @unchecked Sendable {
             if due.hasTime { reminder.addAlarm(EKAlarm(absoluteDate: due.date)) }
         }
         try store.save(reminder, commit: true)
+        guard store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil else {
+            throw ToolError.failed("Reminders didn't keep the new reminder.")
+        }
         Log.reminders.info("Created reminder")
         return Self.item(from: reminder)
     }

@@ -81,7 +81,7 @@ public enum EnergyAdvisor {
         return text
     }
 
-    static func durationText(_ minutes: Int) -> String {
+    public static func durationText(_ minutes: Int) -> String {
         minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min"
     }
 

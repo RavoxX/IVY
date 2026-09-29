@@ -22,14 +22,19 @@ public struct AgentOutcome: Sendable, Equatable {
     public var toolNames: [String]
     public var status: HistoryEntry.Status
     public var usedModel: Bool
+    /// IVY asked a question ("Which Alex?") and is waiting for the user's reply.
+    public var needsReply: Bool
+    /// First tool that ran, for learning from corrections.
+    var firstCall: ToolCall?
 
     public init(text: String, cards: [ResultCard] = [], toolNames: [String] = [], status: HistoryEntry.Status = .success,
-                usedModel: Bool = false) {
+                usedModel: Bool = false, needsReply: Bool = false) {
         self.text = text
         self.cards = cards
         self.toolNames = toolNames
         self.status = status
         self.usedModel = usedModel
+        self.needsReply = needsReply
     }
 }
 
@@ -41,6 +46,8 @@ public enum AgentEvent: Sendable {
     case toolStarted(ToolCall, displayName: String)
     case awaitingConfirmation(ConfirmationRequest)
     case toolFinished(ToolCall, ToolResult)
+    /// A card shown while a tool is still working (streamed text).
+    case cardPreview(ResultCard)
     case finished(AgentOutcome)
     case failed(String)
 }
@@ -64,6 +71,10 @@ public actor AgentService {
     private let now: @Sendable () -> Date
     /// Extra context for the model, e.g. "Focus: Work. Be brief and professional."
     private let situation: @Sendable () async -> String?
+    /// Optional larger model for writing answers from tool results (web search).
+    private let writer: @Sendable () -> (any LocalLLMService)?
+    private let phrases: PhraseMemory?
+    private var warmed = false
 
     /// Recent user/assistant turns (tool chatter excluded) for follow-up questions.
     private var conversation: [ChatMessage] = []
@@ -77,6 +88,8 @@ public actor AgentService {
                 fastRoutingEnabled: @escaping @Sendable () -> Bool = { true },
                 now: @escaping @Sendable () -> Date = { Date() },
                 situation: @escaping @Sendable () async -> String? = { nil },
+                writer: @escaping @Sendable () -> (any LocalLLMService)? = { nil },
+                phrases: PhraseMemory? = nil,
                 confirm: @escaping ConfirmationHandler) {
         self.llm = llm
         self.registry = registry
@@ -86,11 +99,33 @@ public actor AgentService {
         self.fastRoutingEnabled = fastRoutingEnabled
         self.now = now
         self.situation = situation
+        self.writer = writer
+        self.phrases = phrases
         self.confirm = confirm
     }
 
     public func resetConversation() {
         conversation.removeAll()
+    }
+
+    /// Loads the model and prefills the system prompt + tool schemas into its prompt cache, so
+    /// the first real request only has to read the user's words. Called when IVY starts
+    /// listening or typing; a no-op while the warmed model stays loaded.
+    public func warmUp() async {
+        guard let llm, llm.isAvailable else { return }
+        if warmed, await llm.isLoaded { return }
+        warmed = false
+        do {
+            try await llm.loadModel()
+            var generation = options()
+            generation.maxTokens = 1
+            let messages: [ChatMessage] = [.system(SystemPrompt.text), .user(SystemPrompt.contextLine(now: now()) + "\nHi")]
+            _ = try await llm.generate(messages: messages, tools: registry.schemas, options: generation) { _ in }
+            warmed = true
+            Log.agent.info("Prompt cache warmed")
+        } catch {
+            Log.agent.debug("Warm-up skipped: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Runs a request. Cancelling the consuming task cancels generation and pending tools.
@@ -117,10 +152,11 @@ public actor AgentService {
         }
         if now().timeIntervalSince(lastInteraction) > conversationTTL { conversation.removeAll() }
         lastInteraction = now()
-        let context = ToolContext(now: now(), originalQuery: query)
+        let context = ToolContext(now: now(), originalQuery: query, preview: { emit(.cardPreview($0)) })
 
-        // 1. Deterministic fast path.
-        if fastRoutingEnabled(), let call = router.route(query) {
+        // 1. Phrases learned from corrections, then the deterministic fast path.
+        let learned = phrases?.lookup(query).flatMap { registry.tool(named: $0.name) != nil ? $0 : nil }
+        if let call = learned ?? (fastRoutingEnabled() ? router.route(query) : nil) {
             Log.agent.debug("Fast route → \(call.name, privacy: .public)")
             let result = await execute(call, context: context, emit: emit)
             guard !Task.isCancelled else { return }
@@ -135,8 +171,7 @@ public actor AgentService {
                     let outcome = try await runModelLoop(query: query, llm: llm, context: context, emit: emit,
                                                          seed: (call, result))
                     guard !Task.isCancelled else { return }
-                    remember(query: query, answer: outcome.text)
-                    emit(.finished(outcome))
+                    complete(outcome, query: query, firstCall: call, emit: emit)
                     return
                 } catch is CancellationError {
                     return
@@ -147,14 +182,15 @@ public actor AgentService {
                 }
             }
             let outcome = AgentOutcome(text: result.summary, cards: result.card.map { [$0] } ?? [],
-                                       toolNames: [call.name], status: historyStatus(result.status))
-            remember(query: query, answer: outcome.text)
-            emit(.finished(outcome))
+                                       toolNames: [call.name], status: historyStatus(result.status),
+                                       needsReply: result.needsReply)
+            complete(outcome, query: query, firstCall: call, emit: emit)
             return
         }
 
         // 2. Local LLM with tools.
         guard let llm, llm.isAvailable else {
+            phrases?.record(query: query, outcome: .failed)
             emit(.failed(LocalModelError.modelNotInstalled(ModelCatalog.defaultLLM.displayName).errorDescription!))
             return
         }
@@ -165,8 +201,7 @@ public actor AgentService {
             }
             let outcome = try await runModelLoop(query: query, llm: llm, context: context, emit: emit)
             guard !Task.isCancelled else { return }
-            remember(query: query, answer: outcome.text)
-            emit(.finished(outcome))
+            complete(outcome, query: query, firstCall: outcome.firstCall, emit: emit)
         } catch is CancellationError {
             return
         } catch LocalModelError.cancelled {
@@ -174,6 +209,7 @@ public actor AgentService {
         } catch {
             guard !Task.isCancelled else { return }
             Log.agent.error("Agent failed: \(error.localizedDescription, privacy: .public)")
+            phrases?.record(query: query, outcome: .failed)
             emit(.failed(error.localizedDescription))
         }
     }
@@ -185,6 +221,8 @@ public actor AgentService {
         var messages: [ChatMessage] = [.system(SystemPrompt.text)] + conversation
         var contextLine = SystemPrompt.contextLine(now: now())
         if let situation = await situation() { contextLine += " [\(situation)]" }
+        let hints = ToolHints.relevant(for: query)
+        if !hints.isEmpty { contextLine += " [Likely tools: \(hints.joined(separator: ", "))]" }
         messages.append(.user(contextLine + "\n" + query))
         // Remembered turns live at 1..<historyEnd; they're the first thing dropped when space runs out.
         var historyEnd = messages.count - 1
@@ -204,14 +242,26 @@ public actor AgentService {
             allResults = [seed.result]
         }
         var nudged = false
+        var firstCall = seed?.call
+        var lastCallNames = seed.map { [$0.call.name] } ?? []
         let tools = registry.schemas
 
         for iteration in 0..<maxToolIterations {
             emit(.thinking)
             let streamed = StreamBuffer()
             let generation = options()
-            ContextBudget.fit(&messages, historyEnd: &historyEnd, toolSchemas: tools, options: generation)
-            let raw = try await llm.generate(messages: messages, tools: tools, options: generation) { token in
+            // Answers written from tool data (web search) can go to the optional writing model.
+            let writesAnswer = !chained && !lastCallNames.isEmpty
+                && lastCallNames.allSatisfy { registry.tool(named: $0)?.requiresModelAnswer == true }
+            var model = llm
+            var passTools = tools
+            if writesAnswer, let writer = writer(), writer.isAvailable, writer !== llm {
+                model = writer
+                passTools = []
+                if !(await writer.isLoaded) { emit(.modelLoading) }
+            }
+            ContextBudget.fit(&messages, historyEnd: &historyEnd, toolSchemas: passTools, options: generation)
+            let raw = try await model.generate(messages: messages, tools: passTools, options: generation) { token in
                 let text = streamed.append(token)
                 if !ToolCallParser.looksLikeToolCallPrefix(text) {
                     emit(.partialText(ToolCallParser.stripThinking(text).trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -234,12 +284,16 @@ public actor AgentService {
                     return AgentOutcome(text: ActionClaimGuard.fallback, cards: cards, toolNames: toolNames,
                                         status: .failure, usedModel: true)
                 }
-                return AgentOutcome(text: text, cards: cards, toolNames: toolNames,
-                                    status: lastResults.contains { $0.status == .failure } ? .failure : .success,
-                                    usedModel: true)
+                var outcome = AgentOutcome(text: text, cards: cards, toolNames: toolNames,
+                                           status: lastResults.contains { $0.status == .failure } ? .failure : .success,
+                                           usedModel: true, needsReply: text.hasSuffix("?"))
+                outcome.firstCall = firstCall
+                return outcome
             }
 
             messages.append(.assistant(parsed.text, toolCalls: parsed.toolCalls))
+            if firstCall == nil { firstCall = parsed.toolCalls.first }
+            lastCallNames = parsed.toolCalls.map(\.name)
             var results: [ToolResult] = []
             var allTerminal = true
             for call in parsed.toolCalls {
@@ -255,6 +309,14 @@ public actor AgentService {
             lastResults = results
             allResults += results
 
+            // A tool needs the user to choose ("Which Alex?"): ask instead of guessing.
+            if let question = results.first(where: \.needsReply) {
+                var outcome = AgentOutcome(text: question.summary, cards: cards, toolNames: toolNames,
+                                           usedModel: true, needsReply: true)
+                outcome.firstCall = firstCall
+                return outcome
+            }
+
             // Terminal tools already produce a good final sentence: skip a model pass. A chained
             // request only finishes early when the model already asked for several tools at once.
             let covered = !chained || parsed.toolCalls.count > 1 || toolNames.count > 1
@@ -262,11 +324,15 @@ public actor AgentService {
                 let text = (chained ? allResults : results).map(\.summary).joined(separator: " ")
                 let status: HistoryEntry.Status = results.contains { $0.status == .failure } ? .failure
                     : results.allSatisfy { $0.status == .cancelled } ? .cancelled : .success
-                return AgentOutcome(text: text, cards: cards, toolNames: toolNames, status: status, usedModel: true)
+                var outcome = AgentOutcome(text: text, cards: cards, toolNames: toolNames, status: status, usedModel: true)
+                outcome.firstCall = firstCall
+                return outcome
             }
         }
-        return AgentOutcome(text: lastResults.map(\.summary).joined(separator: " "), cards: cards, toolNames: toolNames,
-                            usedModel: true)
+        var outcome = AgentOutcome(text: lastResults.map(\.summary).joined(separator: " "), cards: cards,
+                                   toolNames: toolNames, usedModel: true)
+        outcome.firstCall = firstCall
+        return outcome
     }
 
     // MARK: - Tool execution
@@ -302,6 +368,24 @@ public actor AgentService {
         }
         emit(.toolFinished(call, result))
         return result
+    }
+
+    /// Finishes a request: remembers it for follow-ups and learns from corrections.
+    private func complete(_ outcome: AgentOutcome, query: String, firstCall: ToolCall?,
+                          emit: @Sendable (AgentEvent) -> Void) {
+        remember(query: query, answer: outcome.text)
+        if let phrases {
+            if outcome.status == .failure || outcome.status == .cancelled {
+                phrases.record(query: query, outcome: .failed)
+            } else if outcome.needsReply {
+                // Waiting for an answer: neither a miss nor a success.
+            } else if let firstCall, !outcome.toolNames.isEmpty {
+                phrases.record(query: query, outcome: .tool(firstCall))
+            } else {
+                phrases.record(query: query, outcome: .plainAnswer)
+            }
+        }
+        emit(.finished(outcome))
     }
 
     private func remember(query: String, answer: String) {
@@ -389,7 +473,10 @@ public enum SystemPrompt {
     When one message asks for several things ("remind me at 9 to call Alex and add it to my \
     calendar"), call one tool per part. You may emit several <tool_call> blocks in one reply. \
     Once every part is done, reply in one short sentence.
-    The context line may name the active Focus; follow its guidance on tone and length.
+    The context line may name the active Focus; follow its guidance on tone and length. It may \
+    also list likely tools for this request: prefer them unless another tool clearly fits better.
+    If a request is ambiguous in a way that matters (which person, a reminder or a calendar event, \
+    which file), ask one short question instead of guessing.
     If a question needs current or specific facts you're not sure about (news, prices, sports, \
     recent events, people, products, anything after your training data), call web_search first \
     and answer from its results.

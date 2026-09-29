@@ -15,6 +15,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case showLiveActivity = "general.showLiveActivity"
     case displayPreference = "general.displayPreference"
     case showGlance = "general.showGlance"
+    case proactiveNudges = "general.proactiveNudges"
 
     // AI
     case llmModelID = "ai.modelID"
@@ -25,6 +26,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case unloadAfterMinutes = "ai.unloadAfterMinutes"
     case fastCommandRouting = "ai.fastCommandRouting"
     case energyAwareModels = "ai.energyAwareModels"
+    case writingModelID = "ai.writingModelID"
     case focusAwareReplies = "ai.focusAwareReplies"
 
     // Voice
@@ -73,6 +75,7 @@ public final class SettingsStore: @unchecked Sendable {
         .showLiveActivity: true,
         .displayPreference: "auto",
         .showGlance: true,
+        .proactiveNudges: true,
         .llmModelID: ModelCatalog.defaultLLM.id,
         .llmModelPath: "",
         .contextLength: 8192,
@@ -81,6 +84,7 @@ public final class SettingsStore: @unchecked Sendable {
         .unloadAfterMinutes: 15,
         .fastCommandRouting: true,
         .energyAwareModels: true,
+        .writingModelID: "",
         .focusAwareReplies: true,
         .speechModelID: ModelCatalog.defaultWhisper.id,
         .speechLanguage: "auto",

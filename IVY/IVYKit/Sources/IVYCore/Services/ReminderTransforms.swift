@@ -117,6 +117,14 @@ public enum ReminderTransforms {
     }
 
     /// Best match for "complete the homework reminder".
+    /// Several open reminders match equally well ("call" → "Call Alex", "Call the bank"): ask.
+    public static func ambiguousMatches(for query: String, in items: [ReminderItem]) -> [ReminderItem]? {
+        let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty, !items.contains(where: { $0.title.lowercased() == needle }) else { return nil }
+        let containing = items.filter { $0.title.lowercased().contains(needle) }
+        return containing.count > 1 ? Array(containing.prefix(3)) : nil
+    }
+
     public static func bestMatch(for query: String, in items: [ReminderItem]) -> ReminderItem? {
         let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return nil }

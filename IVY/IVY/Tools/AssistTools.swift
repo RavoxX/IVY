@@ -70,9 +70,13 @@ struct ClipboardTool: IVYTool {
             guard text.isAvailable else {
                 return .failure("The local model isn't installed, so I can't rewrite the clipboard yet.")
             }
+            // Stream the result into a card while the model writes it.
+            let title = action.title
             let reply = try await text.complete(system: ClipboardTransforms.systemPrompt,
                                                 user: ClipboardTransforms.userPrompt(action: action, detail: detail, text: input),
-                                                maxTokens: action == .summarize || action == .shorten ? 400 : 1200)
+                                                maxTokens: action == .summarize || action == .shorten ? 400 : 1200) { partial in
+                context.preview(.text(title: title, body: ClipboardTransforms.cleanModelOutput(partial)))
+            }
             output = ClipboardTransforms.cleanModelOutput(reply)
         } else {
             output = input
@@ -161,6 +165,11 @@ struct MailSearchTool: IVYTool {
         ]
     }
 
+    /// "A, B or C".
+    static func list(_ items: [String]) -> String {
+        items.count <= 1 ? (items.first ?? "") : items.dropLast().joined(separator: ", ") + " or " + items.last!
+    }
+
     func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
         guard service.isInstalled else { return .failure("Apple Mail isn't installed.") }
         try await service.ensureRunning()
@@ -171,6 +180,10 @@ struct MailSearchTool: IVYTool {
         let days = arguments.int("days").map { max(1, min($0, 365)) } ?? (from != nil || query != nil ? 60 : 14)
         let inbox = try await service.recentInbox(days: days)
         let items = MailFilter.filter(inbox, from: from, query: query, unreadOnly: unreadOnly)
+        // "Alex" matched several people: ask instead of mixing their mail together.
+        if let from, query == nil, let names = MailFilter.ambiguousSenders(in: items, for: from) {
+            return .question("Which \(from.capitalizedFirst) do you mean: \(Self.list(names))?", historyTitle: "Mail")
+        }
         let title = from.map { "From \($0.capitalizedFirst)" } ?? query.map { "“\($0)”" } ?? (unreadOnly ? "Unread" : "Inbox")
         return ToolResult(summary: MailFilter.summary(for: items, from: from, query: query, unreadOnly: unreadOnly),
                           data: ["messages": .array(items.prefix(8).map {
@@ -255,6 +268,9 @@ struct ShortcutRunTool: IVYTool {
         guard !shortcuts.isEmpty else {
             return .failure("You don't have any Shortcuts yet. Create one in the Shortcuts app (for example for a Home scene) and ask again.")
         }
+        if let options = ShortcutMatcher.ambiguous(for: requested, in: shortcuts) {
+            return .question("Which shortcut: \(MailSearchTool.list(options.map { "“\($0.name)”" }))?", historyTitle: "Shortcut")
+        }
         guard let shortcut = ShortcutMatcher.best(for: requested, in: shortcuts) else {
             let some = shortcuts.prefix(5).map(\.name).joined(separator: ", ")
             return .failure("I couldn't find a shortcut called “\(requested)”. You have: \(some).")
@@ -336,6 +352,16 @@ struct FocusTool: IVYTool {
         }
         _ = try await shortcuts.run(shortcut, input: nil)
         focus.invalidate()
+        // Check it really switched when IVY can read the Focus state (Full Disk Access).
+        try? await Task.sleep(for: .milliseconds(800))
+        switch focus.current(maxAge: 0) {
+        case .on(let active) where !turnOn || (mode.map { active.caseInsensitiveCompare($0) != .orderedSame } ?? false):
+            return .failure("I ran “\(shortcut.name)”, but \(active) Focus is on.")
+        case .off where turnOn:
+            return .failure("I ran “\(shortcut.name)”, but no Focus is on. Check the shortcut in the Shortcuts app.")
+        default:
+            break
+        }
         let summary = turnOn ? "\(mode ?? "Do Not Disturb") Focus is on." : "\(mode.map { "\($0) Focus" } ?? "Focus") is off."
         return ToolResult(summary: summary, historyTitle: "Focus")
     }

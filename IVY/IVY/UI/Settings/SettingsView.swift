@@ -80,6 +80,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.dismissOnClickOutside.rawValue) private var dismissOnClick = true
     @AppStorage(SettingsKey.displayPreference.rawValue) private var display = "auto"
     @AppStorage(SettingsKey.showGlance.rawValue) private var showGlance = true
+    @AppStorage(SettingsKey.proactiveNudges.rawValue) private var nudges = true
 
     var body: some View {
         Form {
@@ -96,6 +97,10 @@ struct GeneralSettings: View {
                 Toggle("Show today at a glance on the dashboard", isOn: $showGlance)
                     .onChange(of: showGlance) { _, _ in env.glance.refresh(force: true) }
                 Text("Reminders due today, your next event, battery, unread mail and the active Focus, without asking. Only sources you've already allowed are read.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Show notices on the notch", isOn: $nudges)
+                    .onChange(of: nudges) { _, _ in env.nudges.replan() }
+                Text("“Standup in 10 min”, “Battery at 15%”, “Mac is very hot”. Calendar notices stay silent during Sleep and Do Not Disturb.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Display", selection: $display) {
                     Text("Built-in display (notch)").tag("auto")
@@ -122,6 +127,7 @@ struct AISettings: View {
     @ObservedObject var runtime: RuntimeManager
     @AppStorage(SettingsKey.llmModelID.rawValue) private var modelID = ModelCatalog.defaultLLM.id
     @AppStorage(SettingsKey.llmModelPath.rawValue) private var modelPath = ""
+    @AppStorage(SettingsKey.writingModelID.rawValue) private var writingModelID = ""
     @AppStorage(SettingsKey.contextLength.rawValue) private var contextLength = 8192
     @AppStorage(SettingsKey.temperature.rawValue) private var temperature = 0.3
     @AppStorage(SettingsKey.maxResponseTokens.rawValue) private var maxTokens = 320
@@ -145,6 +151,20 @@ struct AISettings: View {
                 }
                 TextField("Custom model path", text: $modelPath, prompt: Text("Optional MLX model folder"))
                 Text("IVY runs \(ModelCatalog.descriptor(id: modelID)?.displayName ?? "the model") with MLX-LM on your Mac. A custom path overrides the selection.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Writing model") {
+                Picker("Write answers with", selection: $writingModelID) {
+                    Text("Same as the main model").tag("")
+                    ForEach(ModelCatalog.llms) { model in
+                        Text("\(model.displayName) · \(model.formattedSize)").tag(model.id)
+                    }
+                }
+                .onChange(of: writingModelID) { _, _ in Task { await env.writerLLM.unloadModel() } }
+                if let model = ModelCatalog.descriptor(id: writingModelID) {
+                    ModelRow(model: model, runtime: runtime)
+                }
+                Text("Optional. The main model stays in charge of commands and picking tools, which keeps IVY fast; web answers, clipboard rewrites, definitions and synonyms are written by this model instead. For example, Qwen3 4B for commands and Qwen3 14B for writing. Both stay in memory while in use.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             DownloadedModelsSection(runtime: runtime)
@@ -671,6 +691,52 @@ struct PrivacySettings: View {
 
 // MARK: - Advanced
 
+/// What IVY learned from corrections ("nicht stören" → Focus). Each entry can be removed.
+struct LearnedPhrasesSection: View {
+    let phrases: PhraseMemory
+    @State private var entries: [PhraseMemory.Entry] = []
+
+    var body: some View {
+        Section {
+            if entries.isEmpty {
+                Text("Nothing learned yet. When a request doesn't work and you rephrase it, IVY remembers what you meant.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(entries) { entry in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("“\(entry.phrase)”")
+                        Text(Self.describe(entry)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        phrases.forget(entry.phrase)
+                        entries = phrases.all
+                    } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .help("Forget")
+                }
+            }
+            if entries.count > 1 {
+                Button("Forget All", role: .destructive) {
+                    phrases.clear()
+                    entries = []
+                }
+            }
+        } header: {
+            Text("Learned phrases")
+        }
+        .onAppear { entries = phrases.all }
+    }
+
+    static func describe(_ entry: PhraseMemory.Entry) -> String {
+        let arguments = entry.arguments.sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value.stringValue ?? $0.value.jsonString())" }
+            .joined(separator: ", ")
+        return arguments.isEmpty ? entry.toolName : "\(entry.toolName) (\(arguments))"
+    }
+}
+
 struct AdvancedSettings: View {
     let env: AppEnvironment
     @AppStorage(SettingsKey.saveHistory.rawValue) private var saveHistory = true
@@ -700,6 +766,7 @@ struct AdvancedSettings: View {
                     }
                 }
             }
+            LearnedPhrasesSection(phrases: env.phrases)
             Section("History") {
                 Toggle("Keep a local history of requests", isOn: $saveHistory)
                 Button("Clear Conversation History", role: .destructive) {

@@ -38,6 +38,22 @@ public enum ShortcutMatcher {
         return best.0
     }
 
+    /// Two or more shortcuts fit about equally well: ask which one instead of guessing.
+    public static func ambiguous(for query: String, in shortcuts: [ShortcutInfo]) -> [ShortcutInfo]? {
+        let wanted = fold(query)
+        guard !wanted.isEmpty, !shortcuts.contains(where: { fold($0.name) == wanted }) else { return nil }
+        let queryTokens = Set(tokens(query))
+        guard !queryTokens.isEmpty else { return nil }
+        let scored = shortcuts.map { shortcut -> (ShortcutInfo, Double) in
+            let nameTokens = Set(tokens(shortcut.name))
+            guard !nameTokens.isEmpty else { return (shortcut, 0) }
+            let shared = Double(queryTokens.intersection(nameTokens).count)
+            return (shortcut, shared / Double(nameTokens.count) * 0.6 + shared / Double(queryTokens.count) * 0.4)
+        }.filter { $0.1 >= 0.5 }.sorted { $0.1 > $1.1 }
+        guard scored.count > 1, scored[0].1 - scored[1].1 < 0.1 else { return nil }
+        return scored.prefix(3).map(\.0)
+    }
+
     /// Shortcut that switches a Focus on ("Work Focus", "Fokus Arbeit") or off ("Focus Off").
     public static func focusShortcut(named focus: String?, on: Bool, in shortcuts: [ShortcutInfo]) -> ShortcutInfo? {
         let expected = ShortcutBuilder.focusShortcutName(focus: focus, on: on)

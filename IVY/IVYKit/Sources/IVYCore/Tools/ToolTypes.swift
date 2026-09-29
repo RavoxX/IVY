@@ -51,14 +51,22 @@ public struct ToolResult: Sendable, Equatable {
     public var card: ResultCard?
     /// Title used in the history list, e.g. "Daily Reminder Overview".
     public var historyTitle: String?
+    /// The summary is a question for the user ("Which Alex?"): IVY stops and waits for a reply.
+    public var needsReply: Bool
 
     public init(status: Status = .success, summary: String, data: JSONValue? = nil, card: ResultCard? = nil,
-                historyTitle: String? = nil) {
+                historyTitle: String? = nil, needsReply: Bool = false) {
         self.status = status
         self.summary = summary
         self.data = data
         self.card = card
         self.historyTitle = historyTitle
+        self.needsReply = needsReply
+    }
+
+    /// Asks the user to choose instead of guessing.
+    public static func question(_ text: String, historyTitle: String? = nil) -> ToolResult {
+        ToolResult(summary: text, historyTitle: historyTitle, needsReply: true)
     }
 
     public static func failure(_ message: String) -> ToolResult {
@@ -121,10 +129,13 @@ public struct ToolParameter: Sendable, Equatable {
 public struct ToolContext: Sendable {
     public var now: Date
     public var originalQuery: String
+    /// Shows a card while the tool is still working (e.g. text streaming from the model).
+    public var preview: @Sendable (ResultCard) -> Void
 
-    public init(now: Date = Date(), originalQuery: String = "") {
+    public init(now: Date = Date(), originalQuery: String = "", preview: @escaping @Sendable (ResultCard) -> Void = { _ in }) {
         self.now = now
         self.originalQuery = originalQuery
+        self.preview = preview
     }
 }
 

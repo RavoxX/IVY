@@ -266,6 +266,8 @@ final class NotchViewModel: ObservableObject {
             phase = .executing(displayName)
         case .awaitingConfirmation:
             break // presented by requestConfirmation(_:)
+        case .cardPreview(let card):
+            showPreview(card)
         case .toolFinished(_, let result):
             workingDone = true
             workingFailed = result.status == .failure
@@ -280,6 +282,10 @@ final class NotchViewModel: ObservableObject {
 
     private func finish(with outcome: AgentOutcome) {
         phase = .answered
+        // After a question ("Which Alex?") IVY stays open and waits for the reply.
+        let next: () -> Void = { [weak self] in
+            if outcome.needsReply { self?.awaitReply() } else { self?.scheduleCollapse() }
+        }
         if settings.ttsEnabled, env.tts.isAvailable, !outcome.text.isEmpty, !isQuietFocus {
             phase = .speaking
             let text = outcome.text
@@ -292,10 +298,39 @@ final class NotchViewModel: ObservableObject {
                 }
                 guard id == runID else { return }
                 if phase == .speaking { phase = .answered }
-                scheduleCollapse()
+                next()
             }
         } else {
-            scheduleCollapse()
+            next()
+        }
+    }
+
+    /// Keeps the question on screen and opens the text field for the answer (holding the
+    /// shortcut to speak works too; the agent remembers the question for 5 minutes).
+    private func awaitReply() {
+        guard mode == .assistant else { return }
+        typedText = ""
+        phase = .textInput
+        cancelCollapse()
+        onKeyFocusChange?(true)
+        // Don't hold the keyboard forever if nobody answers.
+        let id = runID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.runID == id, self.phase == .textInput, self.typedText.isEmpty,
+                      !self.isHovering else { return }
+                self.dismiss()
+            }
+        }
+    }
+
+    /// Replaces a streaming preview (same kind and title) or adds it.
+    private func showPreview(_ card: ResultCard) {
+        if case .text(let title, _) = card,
+           let index = cards.firstIndex(where: { if case .text(title, _) = $0 { return true } else { return false } }) {
+            cards[index] = card
+        } else {
+            cards.append(card)
         }
     }
 
@@ -471,6 +506,23 @@ final class NotchViewModel: ObservableObject {
         scheduleCollapse(after: 30)
     }
 
+    // MARK: - Nudges
+
+    /// A proactive notice ("Standup in 10 min", "Battery at 15%"). Never interrupts a request.
+    func showNudge(_ nudge: NudgeService.Nudge) {
+        if mode == .assistant, phase.isBusy || phase == .listening || phase == .textInput || phase == .confirming { return }
+        if mode == .dashboard { closeDashboard() }
+        runID = UUID()
+        mode = .assistant
+        query = ""
+        answer = nudge.text
+        cards = []
+        workingLabel = nil
+        phase = .answered
+        if !isQuietFocus { NSSound(named: "Tink")?.play() }
+        scheduleCollapse(after: 10)
+    }
+
     // MARK: - History
 
     func reloadHistory() async {
@@ -529,7 +581,8 @@ final class NotchViewModel: ObservableObject {
     private func prewarmModels(speech: Bool = true) {
         let env = self.env
         if speech, env.whisper.isAvailable { Task.detached { try? await env.whisper.prepare() } }
-        if env.llm.isAvailable { Task.detached { try? await env.llm.loadModel() } }
+        // Loads the model and prefills the system prompt + tools, so the first answer is fast.
+        if env.llm.isAvailable { Task.detached { await env.agent.warmUp() } }
     }
 
     private func playActivationSound() {

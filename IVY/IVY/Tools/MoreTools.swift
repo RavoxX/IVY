@@ -228,12 +228,12 @@ struct SystemVolumeTool: IVYTool {
         let runner = AppleScriptRunner.shared
         // Standard Additions run in-process: no Automation permission needed.
         switch action {
-        case "mute":
-            _ = try await runner.run("set volume with output muted")
-            return ToolResult(summary: "Muted.")
-        case "unmute":
-            _ = try await runner.run("set volume without output muted")
-            return ToolResult(summary: "Sound is on.")
+        case "mute", "unmute":
+            let mute = action == "mute"
+            _ = try await runner.run("set volume \(mute ? "with" : "without") output muted")
+            let muted = try await runner.run("output muted of (get volume settings)").booleanValue
+            guard muted == mute else { return .failure("The Mac is still \(muted ? "muted" : "unmuted").") }
+            return ToolResult(summary: mute ? "Muted." : "Sound is on.")
         default:
             let current = Int(try await runner.run("output volume of (get volume settings)").int32Value)
             var target: Int
@@ -246,7 +246,9 @@ struct SystemVolumeTool: IVYTool {
             }
             target = max(0, min(100, target))
             _ = try await runner.run("set volume output volume \(target) without output muted")
-            return ToolResult(summary: "Volume \(target)%.")
+            // Report the level macOS actually applied (it rounds to its own steps).
+            let applied = Int(try await runner.run("output volume of (get volume settings)").int32Value)
+            return ToolResult(summary: "Volume \(applied)%.")
         }
     }
 }
@@ -275,10 +277,13 @@ struct DarkModeTool: IVYTool {
         } catch let error as AppleScriptRunner.ScriptError where error.isPermissionDenied {
             throw ToolError.permissionDenied("Automation (IVY → System Events)")
         }
-        let isDark = await MainActor.run {
-            NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // Ask System Events what's actually set now (the app's own appearance can lag).
+        let isDark = (try? await AppleScriptRunner.shared.run(
+            "tell application \"System Events\" to tell appearance preferences to get dark mode"))?.booleanValue
+        if let isDark, mode != "toggle", isDark != (mode == "dark") {
+            return .failure("Dark mode didn't change.")
         }
-        let resolved = mode == "toggle" ? (isDark ? "light" : "dark") : mode
+        let resolved = isDark.map { $0 ? "dark" : "light" } ?? mode
         return ToolResult(summary: "\(resolved.capitalized) mode is on.")
     }
 }

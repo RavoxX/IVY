@@ -80,6 +80,10 @@ struct RemindersCompleteTool: IVYTool {
     func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
         let query = try arguments.requiredString("title")
         let open = try await service.incompleteReminders()
+        if let options = ReminderTransforms.ambiguousMatches(for: query, in: open) {
+            let names = options.map { "“\($0.title)”" }
+            return .question("Which one: \(MailSearchTool.list(names))?", historyTitle: "Completed Reminder")
+        }
         guard let match = ReminderTransforms.bestMatch(for: query, in: open) else {
             return .failure("I couldn't find an open reminder matching “\(query)”.")
         }
