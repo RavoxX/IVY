@@ -37,15 +37,18 @@ final class RecordingTool: IVYTool, @unchecked Sendable {
     let displayName = "Test"
     let baseRisk: RiskLevel
     let isTerminal: Bool
+    let requiresModelAnswer: Bool
     let summary: String
     private let lock = NSLock()
     private var _calls: [[String: JSONValue]] = []
     var calls: [[String: JSONValue]] { lock.withLock { _calls } }
 
-    init(name: String, risk: RiskLevel = .low, terminal: Bool = true, summary: String = "Done.") {
+    init(name: String, risk: RiskLevel = .low, terminal: Bool = true, summary: String = "Done.",
+         requiresModelAnswer: Bool = false) {
         self.name = name
         self.baseRisk = risk
         self.isTerminal = terminal
+        self.requiresModelAnswer = requiresModelAnswer
         self.summary = summary
     }
 
@@ -83,6 +86,87 @@ struct AgentServiceTests {
         #expect(tool.calls == [["action": "pause"]])
         #expect(llm.received.isEmpty)
         #expect(llm.loadCount == 0)
+    }
+
+    @Test("Fast-routed web searches are answered by the model, not the tool's status line")
+    func fastRoutedSearchGetsModelAnswer() async throws {
+        let llm = FakeLLM(responses: ["- OpenWeather: free weather data\n- NewsAPI: headlines"])
+        let tool = RecordingTool(name: ToolName.webSearch, terminal: false, summary: "Found 5 web results.",
+                                 requiresModelAnswer: true)
+        let agent = AgentService(llm: llm, registry: ToolRegistry(tools: [tool]), router: noApps, confirm: { _ in true })
+        let result = await collect(agent.run("Can you search the internet for public APIs for my AI app?"))
+        #expect(tool.calls.count == 1)
+        #expect(result.outcome?.text == "- OpenWeather: free weather data\n- NewsAPI: headlines")
+        #expect(result.outcome?.cards.count == 1)
+        let messages = try #require(llm.received.first)
+        #expect(messages.last?.role == .tool)
+        #expect(messages.dropLast().last?.toolCalls.first?.name == ToolName.webSearch)
+    }
+
+    @Test("Chained requests keep going until every part has a tool, then report all results")
+    func chainedCommands() async {
+        let llm = FakeLLM(responses: [
+            #"<tool_call>{"name": "reminders_create", "arguments": {"title": "Call Alex", "due": "tomorrow at 9"}}</tool_call>"#,
+            #"<tool_call>{"name": "calendar_create", "arguments": {"title": "Call Alex", "start": "tomorrow at 9"}}</tool_call>"#,
+        ])
+        let reminder = RecordingTool(name: ToolName.remindersCreate, summary: "Reminder set: Call Alex for tomorrow at 9:00.")
+        let event = RecordingTool(name: ToolName.calendarCreate, summary: "Added “Call Alex” to your calendar tomorrow at 9:00.")
+        let agent = AgentService(llm: llm, registry: ToolRegistry(tools: [reminder, event]), router: noApps, confirm: { _ in true })
+        let result = await collect(agent.run("Remind me tomorrow at 9 to call Alex, and set it up in Calendar too"))
+        #expect(reminder.calls.count == 1)
+        #expect(event.calls.count == 1)
+        #expect(llm.received.count == 2)
+        #expect(result.outcome?.text == "Reminder set: Call Alex for tomorrow at 9:00. Added “Call Alex” to your calendar tomorrow at 9:00.")
+        #expect(result.outcome?.cards.count == 2)
+    }
+
+    @Test("The situation (Focus) is added to the model's context line")
+    func focusContext() async throws {
+        let llm = FakeLLM(responses: ["Sure."])
+        let agent = AgentService(llm: llm, registry: ToolRegistry(), router: noApps, fastRoutingEnabled: { false },
+                                 situation: { "Focus: Work. Be brief and professional." }, confirm: { _ in true })
+        _ = await collect(agent.run("how should I phrase this?"))
+        let user = try #require(llm.received.first?.last)
+        #expect(user.content.contains("[Focus: Work. Be brief and professional.]"))
+    }
+
+    @Test("Huge tool errors are clipped and never bloat the next prompt")
+    func hugeErrorsAreClipped() async throws {
+        struct FailingTool: IVYTool {
+            let name = ToolName.mailSearch
+            let description = "fails"
+            let parameters: [ToolParameter] = []
+            let displayName = "Mail"
+            let baseRisk = RiskLevel.low
+            func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
+                throw ToolError.failed(String(repeating: "message id 1051 of mailbox \"INBOX\" of account id X, ", count: 2000))
+            }
+        }
+        let llm = FakeLLM(responses: [#"<tool_call>{"name": "mail_search", "arguments": {}}</tool_call>"#, "OK."])
+        let agent = AgentService(llm: llm, registry: ToolRegistry(tools: [FailingTool()]), router: noApps,
+                                 fastRoutingEnabled: { false }, confirm: { _ in true })
+        let first = await collect(agent.run("any mail?"))
+        #expect((first.outcome?.text.count ?? 0) <= 300)
+        _ = await collect(agent.run("run my lights shortcut"))
+        let prompt = try #require(llm.received.last)
+        #expect(prompt.reduce(0) { $0 + $1.content.count } < 8_000)
+    }
+
+    @Test("Old turns are dropped when the prompt would overflow the context")
+    func contextBudgetDropsHistory() {
+        var messages: [ChatMessage] = [.system("system")]
+        for index in 0..<20 {
+            messages.append(.user("question \(index) " + String(repeating: "x", count: 2_000)))
+            messages.append(.assistant("answer"))
+        }
+        messages.append(.user("current request"))
+        var historyEnd = messages.count - 1
+        ContextBudget.fit(&messages, historyEnd: &historyEnd, toolSchemas: [],
+                          options: GenerationOptions(maxTokens: 320, contextLength: 4096))
+        #expect(messages.first?.role == .system)
+        #expect(messages.last?.content == "current request")
+        #expect(messages.count < 42)
+        #expect(messages.reduce(0) { $0 + $1.content.count } / 3 < 4096)
     }
 
     @Test("Model tool call is parsed, executed, and terminal tools skip the second pass")

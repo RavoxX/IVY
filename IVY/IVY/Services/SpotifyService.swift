@@ -49,6 +49,10 @@ final class SpotifyService: @unchecked Sendable {
     private var notified: MusicState?
     private var artworkCache: [String: URL] = [:]
     private var lastSetVolume: Int?
+    /// Last known-good playback position: from Spotify's notifications or IVY's own seek.
+    /// The AppleScript `player position` getter can lag behind a seek, which made the
+    /// progress bar jump back.
+    private var positionAnchor: (trackID: String, position: TimeInterval, at: Date, playing: Bool, fromSeek: Bool)?
     private var observer: NSObjectProtocol?
 
     /// Called (on any thread) whenever Spotify broadcasts a playback change.
@@ -90,6 +94,9 @@ final class SpotifyService: @unchecked Sendable {
                 state.volume = previous.volume
             }
             notified = state
+            if let id = state.trackID {
+                positionAnchor = (id, state.position, Date(), state.status == .playing, false)
+            }
         }
         onPlaybackChange?(state)
         if state.artworkURL == nil, let id = state.trackID {
@@ -169,6 +176,23 @@ final class SpotifyService: @unchecked Sendable {
             lock.withLock {
                 if let id = live.trackID, live.artworkURL == nil { live.artworkURL = artworkCache[id] }
                 if live.volume == 0, let volume = lastSetVolume { live.volume = volume }
+                if let anchor = positionAnchor, anchor.trackID == live.trackID {
+                    let elapsed = anchor.playing ? Date().timeIntervalSince(anchor.at) : 0
+                    let expected = min(live.duration, anchor.position + elapsed)
+                    // Right after IVY seeks, the getter can still report the old spot; and a stale
+                    // getter reports 0:00 mid-song. Otherwise the scripted position wins (the user
+                    // may have scrubbed in Spotify itself).
+                    let recentSeek = anchor.fromSeek && Date().timeIntervalSince(anchor.at) < 10
+                    let staleZero = live.position < 0.5 && expected > 2
+                    if (recentSeek || staleZero), abs(live.position - expected) > 2.5 {
+                        live.position = expected
+                        live.capturedAt = Date()
+                    }
+                    // Keep the anchor in step with play/pause seen through scripting.
+                    if (live.status == .playing) != anchor.playing {
+                        positionAnchor = (anchor.trackID, live.position, Date(), live.status == .playing, anchor.fromSeek)
+                    }
+                }
             }
             return live
         }
@@ -246,6 +270,20 @@ final class SpotifyService: @unchecked Sendable {
         }
         try await ensureRunning()
         try await execute("tell application id \"\(Self.bundleID)\" to play track \"\(uri)\"")
+    }
+
+    /// Jumps to `seconds` into the current track.
+    func seek(to seconds: TimeInterval, trackID: String?, playing: Bool) async throws {
+        guard isRunning else { throw ToolError.unavailable("Spotify isn't running.") }
+        let target = max(0, seconds)
+        try await execute("tell application id \"\(Self.bundleID)\" to set player position to \(String(format: "%.1f", target))")
+        lock.withLock {
+            if let trackID { positionAnchor = (trackID, target, Date(), playing, true) }
+            if notified?.trackID == trackID {
+                notified?.position = target
+                notified?.capturedAt = Date()
+            }
+        }
     }
 
     func setVolume(_ level: Int) async throws {

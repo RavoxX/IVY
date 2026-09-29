@@ -140,6 +140,9 @@ public protocol IVYTool: Sendable {
     /// When true the tool's summary is already a good final answer, so IVY skips a
     /// second model pass. Saves latency on a fanless MacBook Air.
     var isTerminal: Bool { get }
+    /// When true the summary only reports what the tool did ("Found 5 web results"), so even
+    /// a fast-routed call goes back to the model to answer from the result's data.
+    var requiresModelAnswer: Bool { get }
 
     /// Risk may depend on the arguments (e.g. an allowlisted command).
     func risk(for arguments: [String: JSONValue]) -> RiskLevel
@@ -150,6 +153,7 @@ public protocol IVYTool: Sendable {
 
 public extension IVYTool {
     var isTerminal: Bool { true }
+    var requiresModelAnswer: Bool { false }
     func risk(for arguments: [String: JSONValue]) -> RiskLevel { baseRisk }
     func confirmationPrompt(for arguments: [String: JSONValue]) -> String {
         "Allow IVY to run \(displayName)?"

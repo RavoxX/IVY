@@ -101,7 +101,7 @@ final class TimerService: ObservableObject {
     }
 }
 
-/// Calendar events through EventKit (read-only).
+/// Calendar events through EventKit: read, and create when the user asks.
 final class CalendarService: @unchecked Sendable {
     private let store = EKEventStore()
 
@@ -113,6 +113,26 @@ final class CalendarService: @unchecked Sendable {
         case .notDetermined: return try await store.requestFullAccessToEvents()
         default: return false
         }
+    }
+
+    /// Adds an event to the default calendar. `end` nil = one hour (or the whole day).
+    func create(title: String, start: Date, end: Date?, allDay: Bool, location: String?) async throws -> CalendarEventItem {
+        guard try await ensureAccess() else { throw ToolError.permissionDenied("Calendar") }
+        guard let calendar = store.defaultCalendarForNewEvents else {
+            throw ToolError.unavailable("No calendar is available for new events.")
+        }
+        let event = EKEvent(eventStore: store)
+        event.title = title
+        event.calendar = calendar
+        event.isAllDay = allDay
+        event.startDate = allDay ? Calendar.current.startOfDay(for: start) : start
+        event.endDate = end ?? (allDay ? event.startDate.addingTimeInterval(86_400 - 1) : start.addingTimeInterval(3600))
+        event.location = location
+        if !allDay { event.addAlarm(EKAlarm(relativeOffset: -600)) }
+        try store.save(event, span: .thisEvent, commit: true)
+        Log.tools.info("Created calendar event")
+        return CalendarEventItem(id: event.eventIdentifier ?? UUID().uuidString, title: title, start: event.startDate,
+                                 end: event.endDate, isAllDay: allDay, calendar: calendar.title, location: location)
     }
 
     func events(scope: String, now: Date = Date()) async throws -> [CalendarEventItem] {

@@ -13,13 +13,18 @@ public struct NotchGeometry: Equatable, Sendable {
     public var topBandHeight: CGFloat
     /// Horizontal center of the notch in global coordinates.
     public var centerX: CGFloat
+    /// Backing scale factor (2 on Retina). Panel positions snap to device pixels, not points,
+    /// so a notch centered on a half point isn't drawn one pixel off.
+    public var scale: CGFloat
 
-    public init(screenFrame: CGRect, hasNotch: Bool, notchWidth: CGFloat, topBandHeight: CGFloat, centerX: CGFloat) {
+    public init(screenFrame: CGRect, hasNotch: Bool, notchWidth: CGFloat, topBandHeight: CGFloat, centerX: CGFloat,
+                scale: CGFloat = 2) {
         self.screenFrame = screenFrame
         self.hasNotch = hasNotch
         self.notchWidth = notchWidth
         self.topBandHeight = topBandHeight
         self.centerX = centerX
+        self.scale = max(1, scale)
     }
 
     /// Builds geometry from `NSScreen` properties.
@@ -29,7 +34,7 @@ public struct NotchGeometry: Equatable, Sendable {
     ///     the usable menu bar areas either side of the notch.
     ///   - visibleFrame: `NSScreen.visibleFrame`, used for the menu bar height on other displays.
     public static func make(screenFrame: CGRect, visibleFrame: CGRect, safeAreaTop: CGFloat,
-                            auxiliaryTopLeft: CGRect?, auxiliaryTopRight: CGRect?) -> NotchGeometry {
+                            auxiliaryTopLeft: CGRect?, auxiliaryTopRight: CGRect?, scale: CGFloat = 2) -> NotchGeometry {
         if safeAreaTop > 0, let left = auxiliaryTopLeft, let right = auxiliaryTopRight {
             // The auxiliary areas are reported in screen coordinates. Normalize to a local
             // x-offset so the math is identical on secondary displays.
@@ -39,14 +44,14 @@ public struct NotchGeometry: Equatable, Sendable {
             if width > 0 {
                 return NotchGeometry(screenFrame: screenFrame, hasNotch: true, notchWidth: width,
                                      topBandHeight: safeAreaTop,
-                                     centerX: screenFrame.minX + leftLocalMaxX + width / 2)
+                                     centerX: screenFrame.minX + leftLocalMaxX + width / 2, scale: scale)
             }
         }
         // No notch: attach to the top-center edge, below nothing, using the menu bar height.
         let menuBar = max(0, screenFrame.maxY - visibleFrame.maxY)
         return NotchGeometry(screenFrame: screenFrame, hasNotch: false, notchWidth: 0,
                              topBandHeight: menuBar > 0 ? min(menuBar, 40) : 24,
-                             centerX: screenFrame.midX)
+                             centerX: screenFrame.midX, scale: scale)
     }
 
     /// Converts an x value to screen-local space. `rectMinX` is the left auxiliary area's
@@ -59,7 +64,7 @@ public struct NotchGeometry: Equatable, Sendable {
     /// Window frame for a panel of `size`, horizontally centered on the notch and flush
     /// with the top edge of the screen.
     public func panelFrame(size: CGSize) -> CGRect {
-        CGRect(x: (centerX - size.width / 2).rounded(),
+        CGRect(x: ((centerX - size.width / 2) * scale).rounded() / scale,
                y: screenFrame.maxY - size.height,
                width: size.width,
                height: size.height)

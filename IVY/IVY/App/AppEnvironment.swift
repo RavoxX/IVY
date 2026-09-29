@@ -21,6 +21,14 @@ final class AppEnvironment {
     let battery = BatteryMonitor()
     let timers = TimerService()
     let calendar = CalendarService()
+    let mail = MailService()
+    let shortcutsService = ShortcutsService()
+    let focus = FocusService()
+    let fileSearch = FileSearchService()
+    let governor = EnergyGovernor()
+    let energy = EnergyMonitor()
+    let textService: LLMTextService
+    let glance: GlanceService
     let registry = ToolRegistry()
     private(set) var agent: AgentService!
     private(set) var notch: NotchViewModel!
@@ -30,9 +38,12 @@ final class AppEnvironment {
 
     init() {
         runtime = RuntimeManager(settings: settings)
-        llm = MLXLLMService(settings: settings)
-        whisper = LocalWhisperService(settings: settings)
-        tts = KokoroMLXTTSService(settings: settings)
+        llm = MLXLLMService(settings: settings, governor: governor)
+        whisper = LocalWhisperService(settings: settings, governor: governor)
+        tts = KokoroMLXTTSService(settings: settings, governor: governor)
+        textService = LLMTextService(llm: llm, settings: settings)
+        glance = GlanceService(settings: settings, reminders: reminders, calendar: calendar, mail: mail,
+                               focus: focus, energy: energy)
         music = MusicController(spotify: spotify)
         claudeCode = ClaudeCodeService(settings: settings)
 
@@ -41,10 +52,15 @@ final class AppEnvironment {
         let launcher = appLauncher
         let router = CommandRouter(resolveApp: { launcher.resolve($0)?.name })
         let settings = self.settings
+        let focus = self.focus
         agent = AgentService(
             llm: llm, registry: registry, router: router, policy: SecurityPolicy(),
             options: { settings.generationOptions },
             fastRoutingEnabled: { settings.bool(.fastCommandRouting) },
+            situation: {
+                guard settings.bool(.focusAwareReplies), let name = focus.activeName else { return nil }
+                return FocusParser.replyGuidance(for: name)
+            },
             confirm: { [weak self] request in
                 guard let self else { return false }
                 return await self.notch.requestConfirmation(request)
@@ -56,6 +72,34 @@ final class AppEnvironment {
             case .llm: await llm.unloadModel()
             case .whisper: await whisper.unload()
             case .kokoro: await tts.unload()
+            }
+        }
+
+        energy.onPolicyChange = { [weak self] policy in self?.applyEnergyPolicy(policy) }
+        applyEnergyPolicy(energy.policy)
+        // Warm the Shortcuts list so the model knows the user's Home shortcuts by name.
+        let shortcutsService = self.shortcutsService
+        Task.detached(priority: .utility) { _ = await shortcutsService.list() }
+    }
+
+    /// Hot, Low Power Mode or low battery: unload idle models sooner (or now, if critical).
+    func applyEnergyPolicy(_ policy: EnergyAdvisor.ModelPolicy) {
+        let enabled = settings.bool(.energyAwareModels)
+        switch enabled ? policy : .normal {
+        case .normal: governor.setCap(minutes: nil)
+        case .conserve(let minutes): governor.setCap(minutes: minutes)
+        case .unloadNow: governor.setCap(minutes: 1)
+        }
+        let busy = notch?.isBusy ?? false
+        Task { [llm, whisper, tts] in
+            if enabled, policy == .unloadNow, !busy {
+                await llm.unloadModel()
+                await whisper.unload()
+                await tts.unload()
+            } else {
+                await llm.applyIdleTimeout()
+                await whisper.applyIdleTimeout()
+                await tts.applyIdleTimeout()
             }
         }
     }
@@ -92,6 +136,15 @@ final class AppEnvironment {
             ClaudeCodeTool(service: claudeCode, settings: settings),
             MoveToTrashTool(),
             RunCommandTool(),
+            FileSearchTool(service: fileSearch),
+            ClipboardTool(text: textService),
+            DictionaryTool(text: textService),
+            MailSearchTool(service: mail),
+            CalendarCreateTool(service: calendar),
+            ShortcutRunTool(service: shortcutsService),
+            FocusTool(focus: focus, shortcuts: shortcutsService),
+            LowPowerModeTool(),
+            EnergyTool(monitor: energy, llm: llm),
         ]
         tools.forEach(registry.register)
     }

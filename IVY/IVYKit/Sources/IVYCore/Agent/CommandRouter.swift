@@ -35,9 +35,22 @@ public struct CommandRouter: Sendable {
         guard !text.isEmpty else { return nil }
 
         if let call = routeSettings(text, original: input) { return call }
+        // "Remind me … and add it to my calendar too" needs several tools: the model plans those.
+        // Only the deliberate two-step phrasings below stay on the fast path.
+        if ChainDetector.isCompound(text) {
+            return routeBrowserSearch(text) ?? routeCodingSession(text, original: input)
+        }
         if let call = routeTimers(text, original: input) { return call }
         if let call = routeCalculation(text) { return call }
+        if let call = routeDictionary(text) { return call }
+        if let call = routeClipboard(text) { return call }
         if let call = routeSystem(text) { return call }
+        if let call = routeLowPower(text) { return call }
+        if let call = routeEnergy(text) { return call }
+        if let call = routeFocus(text) { return call }
+        if let call = routeMail(text) { return call }
+        if let call = routeFiles(text) { return call }
+        if let call = routeShortcut(text) { return call }
         if let call = routeWeather(text) { return call }
         if let call = routeCalendar(text) { return call }
         if let call = routeBrowserSearch(text) { return call }

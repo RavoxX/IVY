@@ -14,6 +14,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case openOnHover = "general.openOnHover"
     case showLiveActivity = "general.showLiveActivity"
     case displayPreference = "general.displayPreference"
+    case showGlance = "general.showGlance"
 
     // AI
     case llmModelID = "ai.modelID"
@@ -23,6 +24,8 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case maxResponseTokens = "ai.maxResponseTokens"
     case unloadAfterMinutes = "ai.unloadAfterMinutes"
     case fastCommandRouting = "ai.fastCommandRouting"
+    case energyAwareModels = "ai.energyAwareModels"
+    case focusAwareReplies = "ai.focusAwareReplies"
 
     // Voice
     case speechModelID = "voice.speechModelID"
@@ -31,6 +34,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case kokoroVoice = "voice.kokoroVoice"
     case speechRate = "voice.speechRate"
     case ttsVolume = "voice.ttsVolume"
+    case quietDuringFocus = "voice.quietDuringFocus"
 
     // Shortcuts
     case activationShortcut = "shortcut.activation"
@@ -43,6 +47,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case spotifyClientID = "integrations.spotifyClientID"
     case onlineTrackLookup = "integrations.onlineTrackLookup"
     case webSearchEnabled = "integrations.webSearchEnabled"
+    case mailOnDashboard = "integrations.mailOnDashboard"
 
     // Advanced
     case modelsFolder = "advanced.modelsFolder"
@@ -67,6 +72,7 @@ public final class SettingsStore: @unchecked Sendable {
         .openOnHover: true,
         .showLiveActivity: true,
         .displayPreference: "auto",
+        .showGlance: true,
         .llmModelID: ModelCatalog.defaultLLM.id,
         .llmModelPath: "",
         .contextLength: 8192,
@@ -74,12 +80,15 @@ public final class SettingsStore: @unchecked Sendable {
         .maxResponseTokens: 320,
         .unloadAfterMinutes: 15,
         .fastCommandRouting: true,
+        .energyAwareModels: true,
+        .focusAwareReplies: true,
         .speechModelID: ModelCatalog.defaultWhisper.id,
         .speechLanguage: "auto",
         .ttsEnabled: false, // Voice responses are OFF by default.
         .kokoroVoice: "af_heart",
         .speechRate: 1.0,
         .ttsVolume: 0.9,
+        .quietDuringFocus: true,
         .activationShortcut: ActivationShortcut.commandOption.rawValue,
         .holdDuration: 0.5,
         .textToggleWindow: 0.5,
@@ -88,6 +97,7 @@ public final class SettingsStore: @unchecked Sendable {
         .spotifyClientID: "",
         .onlineTrackLookup: true,
         .webSearchEnabled: true,
+        .mailOnDashboard: true,
         .modelsFolder: "",
         .saveHistory: true,
         .logPrompts: false,

@@ -187,7 +187,21 @@ struct NotchGeometryTests {
         #expect(panel == CGRect(x: 535, y: 756, width: 400, height: 200))
     }
 
-    @Test func externalDisplayWithoutNotch() {
+    @Test func halfPointNotchCenterSnapsToPixels() {
+        // An odd notch width puts the center on a half point: keep it (Retina pixel), don't round it away.
+        let frame = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let geometry = NotchGeometry.make(screenFrame: frame, visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+                                          safeAreaTop: 38,
+                                          auxiliaryTopLeft: CGRect(x: 0, y: 944, width: 663, height: 38),
+                                          auxiliaryTopRight: CGRect(x: 848, y: 944, width: 664, height: 38), scale: 2)
+        #expect(geometry.centerX == 755.5)
+        #expect(geometry.panelFrame(size: CGSize(width: 400, height: 38)).midX == 755.5)
+        let nonRetina = NotchGeometry(screenFrame: frame, hasNotch: true, notchWidth: 185, topBandHeight: 38,
+                                      centerX: 755.5, scale: 1)
+        #expect(nonRetina.panelFrame(size: CGSize(width: 400, height: 38)).minX == 556)
+    }
+
+        @Test func externalDisplayWithoutNotch() {
         let frame = CGRect(x: 1470, y: 0, width: 2560, height: 1440)
         let geometry = NotchGeometry.make(screenFrame: frame, visibleFrame: CGRect(x: 1470, y: 0, width: 2560, height: 1415),
                                           safeAreaTop: 0, auxiliaryTopLeft: nil, auxiliaryTopRight: nil)

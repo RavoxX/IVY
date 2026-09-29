@@ -62,11 +62,13 @@ public actor AgentService {
     private let options: @Sendable () -> GenerationOptions
     private let fastRoutingEnabled: @Sendable () -> Bool
     private let now: @Sendable () -> Date
+    /// Extra context for the model, e.g. "Focus: Work. Be brief and professional."
+    private let situation: @Sendable () async -> String?
 
     /// Recent user/assistant turns (tool chatter excluded) for follow-up questions.
     private var conversation: [ChatMessage] = []
     private var lastInteraction: Date = .distantPast
-    public var maxToolIterations = 3
+    public var maxToolIterations = 4
     public var conversationTTL: TimeInterval = 300
 
     public init(llm: (any LocalLLMService)?, registry: ToolRegistry, router: CommandRouter,
@@ -74,6 +76,7 @@ public actor AgentService {
                 options: @escaping @Sendable () -> GenerationOptions = { GenerationOptions() },
                 fastRoutingEnabled: @escaping @Sendable () -> Bool = { true },
                 now: @escaping @Sendable () -> Date = { Date() },
+                situation: @escaping @Sendable () async -> String? = { nil },
                 confirm: @escaping ConfirmationHandler) {
         self.llm = llm
         self.registry = registry
@@ -82,6 +85,7 @@ public actor AgentService {
         self.options = options
         self.fastRoutingEnabled = fastRoutingEnabled
         self.now = now
+        self.situation = situation
         self.confirm = confirm
     }
 
@@ -120,6 +124,28 @@ public actor AgentService {
             Log.agent.debug("Fast route → \(call.name, privacy: .public)")
             let result = await execute(call, context: context, emit: emit)
             guard !Task.isCancelled else { return }
+            // Some results (web search) are raw material: let the model write the answer.
+            if result.status == .success, registry.tool(named: call.name)?.requiresModelAnswer == true,
+               let llm, llm.isAvailable {
+                do {
+                    if !(await llm.isLoaded) {
+                        emit(.modelLoading)
+                        try await llm.loadModel()
+                    }
+                    let outcome = try await runModelLoop(query: query, llm: llm, context: context, emit: emit,
+                                                         seed: (call, result))
+                    guard !Task.isCancelled else { return }
+                    remember(query: query, answer: outcome.text)
+                    emit(.finished(outcome))
+                    return
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    Log.agent.error("Answer pass failed: \(error.localizedDescription, privacy: .public)")
+                    // Fall through to the tool's own summary and cards.
+                }
+            }
             let outcome = AgentOutcome(text: result.summary, cards: result.card.map { [$0] } ?? [],
                                        toolNames: [call.name], status: historyStatus(result.status))
             remember(query: query, answer: outcome.text)
@@ -152,21 +178,40 @@ public actor AgentService {
         }
     }
 
+    /// `seed` is a tool call the router already ran; the model continues from its result.
     private func runModelLoop(query: String, llm: any LocalLLMService, context: ToolContext,
-                              emit: @escaping @Sendable (AgentEvent) -> Void) async throws -> AgentOutcome {
+                              emit: @escaping @Sendable (AgentEvent) -> Void,
+                              seed: (call: ToolCall, result: ToolResult)? = nil) async throws -> AgentOutcome {
         var messages: [ChatMessage] = [.system(SystemPrompt.text)] + conversation
-        messages.append(.user(SystemPrompt.contextLine(now: now()) + "\n" + query))
+        var contextLine = SystemPrompt.contextLine(now: now())
+        if let situation = await situation() { contextLine += " [\(situation)]" }
+        messages.append(.user(contextLine + "\n" + query))
+        // Remembered turns live at 1..<historyEnd; they're the first thing dropped when space runs out.
+        var historyEnd = messages.count - 1
+        // Several actions in one sentence: keep going after the first tool until the model is done.
+        let chained = ChainDetector.isCompound(CommandRouter.normalize(query))
 
         var cards: [ResultCard] = []
         var toolNames: [String] = []
         var lastResults: [ToolResult] = []
+        var allResults: [ToolResult] = []
+        if let seed {
+            messages.append(.assistant("", toolCalls: [seed.call]))
+            messages.append(.tool(seed.call.name, ContextBudget.clip(seed.result.modelPayload, ContextBudget.maxToolPayload)))
+            toolNames.append(seed.call.name)
+            if let card = seed.result.card { cards.append(card) }
+            lastResults = [seed.result]
+            allResults = [seed.result]
+        }
         var nudged = false
         let tools = registry.schemas
 
         for iteration in 0..<maxToolIterations {
             emit(.thinking)
             let streamed = StreamBuffer()
-            let raw = try await llm.generate(messages: messages, tools: tools, options: options()) { token in
+            let generation = options()
+            ContextBudget.fit(&messages, historyEnd: &historyEnd, toolSchemas: tools, options: generation)
+            let raw = try await llm.generate(messages: messages, tools: tools, options: generation) { token in
                 let text = streamed.append(token)
                 if !ToolCallParser.looksLikeToolCallPrefix(text) {
                     emit(.partialText(ToolCallParser.stripThinking(text).trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -203,15 +248,18 @@ public actor AgentService {
                 results.append(result)
                 toolNames.append(call.name)
                 if let card = result.card { cards.append(card) }
-                messages.append(.tool(call.name, result.modelPayload))
+                messages.append(.tool(call.name, ContextBudget.clip(result.modelPayload, ContextBudget.maxToolPayload)))
                 let terminal = registry.tool(named: call.name)?.isTerminal ?? false
                 if !terminal || result.status == .failure { allTerminal = false }
             }
             lastResults = results
+            allResults += results
 
-            // Terminal tools already produce a good final sentence: skip a model pass.
-            if allTerminal || iteration == maxToolIterations - 1 {
-                let text = results.map(\.summary).joined(separator: " ")
+            // Terminal tools already produce a good final sentence: skip a model pass. A chained
+            // request only finishes early when the model already asked for several tools at once.
+            let covered = !chained || parsed.toolCalls.count > 1 || toolNames.count > 1
+            if (allTerminal && covered) || iteration == maxToolIterations - 1 {
+                let text = (chained ? allResults : results).map(\.summary).joined(separator: " ")
                 let status: HistoryEntry.Status = results.contains { $0.status == .failure } ? .failure
                     : results.allSatisfy { $0.status == .cancelled } ? .cancelled : .success
                 return AgentOutcome(text: text, cards: cards, toolNames: toolNames, status: status, usedModel: true)
@@ -249,7 +297,8 @@ public actor AgentService {
             result = try await tool.execute(arguments: call.arguments, context: context)
         } catch {
             Log.tools.error("\(tool.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            result = .failure(error.localizedDescription)
+            // Some errors (AppleScript) echo huge object lists; keep what the user and model see short.
+            result = .failure(ContextBudget.clip(error.localizedDescription, 300))
         }
         emit(.toolFinished(call, result))
         return result
@@ -257,7 +306,7 @@ public actor AgentService {
 
     private func remember(query: String, answer: String) {
         conversation.append(.user(query))
-        conversation.append(.assistant(answer))
+        conversation.append(.assistant(ContextBudget.clip(answer, ContextBudget.maxRememberedAnswer)))
         if conversation.count > 6 { conversation.removeFirst(conversation.count - 6) }
     }
 
@@ -266,6 +315,39 @@ public actor AgentService {
         case .success: return .success
         case .failure: return .failure
         case .cancelled: return .cancelled
+        }
+    }
+}
+
+/// Keeps prompts inside the model's context window. Token counts are estimated from
+/// characters (about 3.5 per token for Qwen's tokenizer on mixed text), with headroom.
+public enum ContextBudget {
+    public static let maxToolPayload = 6_000
+    public static let maxRememberedAnswer = 800
+
+    public static func clip(_ text: String, _ limit: Int) -> String {
+        text.count <= limit ? text : String(text.prefix(limit - 1)) + "…"
+    }
+
+    static func estimatedTokens(_ characters: Int) -> Int { Int((Double(characters) / 3.2).rounded(.up)) }
+
+    /// Drops the oldest remembered turns first, then shortens the longest tool results,
+    /// until the prompt plus the reply fits. The system prompt and the new request stay.
+    public static func fit(_ messages: inout [ChatMessage], historyEnd: inout Int, toolSchemas: [JSONValue],
+                           options: GenerationOptions) {
+        let toolCharacters = toolSchemas.reduce(0) { $0 + $1.jsonString().count }
+        let budget = options.contextLength - options.maxTokens - 256
+        func total() -> Int {
+            estimatedTokens(toolCharacters + messages.reduce(0) { $0 + $1.content.count + 16 })
+        }
+        while total() > budget, historyEnd > 1 {
+            messages.remove(at: 1)
+            historyEnd -= 1
+        }
+        while total() > budget,
+              let index = messages.indices.filter({ messages[$0].role == .tool }).max(by: { messages[$0].content.count < messages[$1].content.count }),
+              messages[index].content.count > 400 {
+            messages[index].content = clip(messages[index].content, messages[index].content.count / 2)
         }
     }
 }
@@ -286,21 +368,35 @@ public enum SystemPrompt {
     public static let text = """
     You are IVY, a concise personal macOS assistant running locally on the user's Mac. \
     Respond with the shortest useful answer unless additional detail is necessary. \
-    Answers appear in a small overlay under the notch: one or two short sentences, no filler, \
-    no greetings, no follow-up offers, no markdown headings.
+    Answers appear in a small overlay under the notch: usually one or two short sentences, no \
+    filler, no greetings, no follow-up offers, no markdown headings.
     When the user asks you to perform an action, use an available tool instead of explaining \
     how the user could do it. Never invent reminders, songs, files or results; use tools to look \
-    them up. After a tool result, reply in one short sentence based only on that result. \
+    them up. After a tool result, reply briefly based only on that result. \
     If a tool fails, say so briefly.
     For dates and times in tool arguments, repeat the user's own words (for example \
     "tomorrow at 5pm") unless they gave an exact date.
     Never say you did something (opened, played, set, searched, created…) unless a tool \
     result in this conversation confirms it. If no tool fits, say briefly that you can't do it yet.
     Use timer_set for timers and alarms (not reminders). Use browser_search when the user wants \
-    a search or page shown in a browser.
+    a search or page shown in a browser. Use calendar_create to put events in the calendar and \
+    reminders_create for to-dos. Use file_search to find files, clipboard for anything about \
+    copied text, dictionary for meanings, synonyms and antonyms, mail_search for email, \
+    shortcut_run for Home devices, scenes and the user's other Shortcuts, focus for Focus modes \
+    (action setup creates the shortcut IVY needs to switch a Focus), low_power_mode for Low Power \
+    Mode (never use focus for it) \
+    and energy_status for battery health, charging and heat.
+    When one message asks for several things ("remind me at 9 to call Alex and add it to my \
+    calendar"), call one tool per part. You may emit several <tool_call> blocks in one reply. \
+    Once every part is done, reply in one short sentence.
+    The context line may name the active Focus; follow its guidance on tone and length.
     If a question needs current or specific facts you're not sure about (news, prices, sports, \
     recent events, people, products, anything after your training data), call web_search first \
     and answer from its results.
+    After web_search, answer the actual question with concrete facts, names and numbers from the \
+    results. Never reply that you found results or tell the user to check the sources. When the \
+    user asks for options or recommendations, list 3-5 specific ones as short "- " lines, each \
+    with a few words on why it fits. If the results don't contain the answer, say so briefly.
     """
 
     public static func contextLine(now: Date, locale: Locale = .current) -> String {

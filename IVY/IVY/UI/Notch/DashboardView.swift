@@ -113,8 +113,8 @@ struct DashboardHome: View {
         HStack(spacing: 18) {
             NowPlayingView(music: music)
             Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1)
-            QuickActions(model: model)
-                .frame(width: 150)
+            QuickActions(model: model, glance: model.env.glance)
+                .frame(width: 190)
         }
     }
 }
@@ -133,8 +133,7 @@ struct NowPlayingView: View {
                 if let state, state.hasTrack {
                     Text(state.title).font(.system(size: 15, weight: .bold)).foregroundStyle(.white).lineLimit(1)
                     Text(state.artist).font(.system(size: 13, weight: .medium)).foregroundStyle(accent).lineLimit(1)
-                    PlaybackProgress(state: state, tint: accent)
-                        .padding(.top, 4)
+                    PlaybackProgress(state: state, tint: accent) { music.seek(to: $0) }
                     MediaControls(state: state, music: music)
                         .frame(maxWidth: .infinity)
                 } else {
@@ -154,27 +153,72 @@ struct NowPlayingView: View {
     }
 }
 
+/// Right column of Home: today at a glance (reminders, next event, mail, Focus, battery)
+/// with each line asking IVY for details, plus "Ask IVY".
 struct QuickActions: View {
     @ObservedObject var model: NotchViewModel
+    @ObservedObject var glance: GlanceService
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
+            if glance.items.isEmpty {
+                Button { model.submit("What's on my to-do list today?") } label: {
+                    Label("Today", systemImage: "checklist").frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(DashboardTileStyle())
+            } else {
+                ForEach(glance.items) { item in
+                    GlanceRow(item: item) { if let query = item.query { model.submit(query) } }
+                }
+            }
+            Spacer(minLength: 4)
             Button { model.enterTextMode() } label: {
-                Label("Ask IVY", systemImage: "text.cursor")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Label("Ask IVY", systemImage: "text.cursor")
+                    Spacer()
+                    KeyCap(text: model.env.settings.activationShortcut.symbols)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(DashboardTileStyle())
-            Button { model.submit("What's on my to-do list today?") } label: {
-                Label("Today", systemImage: "checklist")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct GlanceRow: View {
+    let item: GlanceService.Item
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 16)
+                Text(item.text)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 0)
             }
-            .buttonStyle(DashboardTileStyle())
-            HStack(spacing: 4) {
-                Text("Hold").foregroundStyle(.white.opacity(0.4))
-                KeyCap(text: model.env.settings.activationShortcut.symbols)
-                Text("to talk").foregroundStyle(.white.opacity(0.4))
-            }
-            .font(.system(size: 11))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(hovering ? 0.08 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+
+    private var color: Color {
+        switch item.tint {
+        case .neutral: return .white.opacity(0.7)
+        case .orange: return .orange
+        case .red: return Color(red: 1, green: 0.42, blue: 0.4)
+        case .green: return .green
+        case .purple: return Color(red: 0.7, green: 0.6, blue: 1)
         }
     }
 }
@@ -341,6 +385,14 @@ struct HistoryRow: View {
         case ToolName.openURL?: return "globe"
         case ToolName.openFile?, ToolName.revealInFinder?: return "folder"
         case ToolName.openSettings?: return "gearshape"
+        case ToolName.fileSearch?: return "doc.text.magnifyingglass"
+        case ToolName.clipboard?: return "doc.on.clipboard"
+        case ToolName.dictionary?: return "character.book.closed"
+        case ToolName.mailSearch?: return "envelope"
+        case ToolName.calendarCreate?, ToolName.calendarEvents?: return "calendar"
+        case ToolName.shortcutRun?: return "square.stack.3d.up"
+        case ToolName.focus?: return "moon"
+        case ToolName.energyStatus?, ToolName.systemInfo?, ToolName.lowPowerMode?: return "battery.75percent"
         case nil: return "bubble.left"
         default: return "bolt"
         }

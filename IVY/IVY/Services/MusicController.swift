@@ -91,6 +91,23 @@ final class MusicController: ObservableObject {
         }
     }
 
+    /// Scrubbing the progress bar.
+    func seek(to seconds: TimeInterval) {
+        guard let current = state, current.duration > 0 else { return }
+        state?.position = min(max(0, seconds), current.duration)
+        state?.capturedAt = Date()
+        Task {
+            do {
+                try await spotify.seek(to: seconds, trackID: current.trackID, playing: current.status == .playing)
+                try? await Task.sleep(for: .milliseconds(350))
+                refresh()
+            } catch {
+                lastError = error.localizedDescription
+                refresh()
+            }
+        }
+    }
+
     /// A playback notification from Spotify (already parsed by `SpotifyService`).
     private func receive(_ notified: MusicState) {
         var next = notified

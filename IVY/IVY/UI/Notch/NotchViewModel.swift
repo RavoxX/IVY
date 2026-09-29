@@ -18,6 +18,7 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var cards: [ResultCard] = []
     @Published private(set) var workingLabel: String?
     @Published private(set) var workingDone = false
+    @Published private(set) var workingFailed = false
     @Published private(set) var confirmation: ConfirmationRequest?
     @Published private(set) var audioLevel: Float = 0
     @Published var typedText = ""
@@ -123,6 +124,15 @@ final class NotchViewModel: ObservableObject {
         case .closed: return showsLiveActivity ? 12 : 10
         case .dashboard, .assistant: return NotchLayout.openBottomRadius
         }
+    }
+
+    /// Generating or running a tool (models must not be unloaded under it).
+    var isBusy: Bool { mode == .assistant && phase.isBusy }
+
+    /// Sleep / Do Not Disturb Focus with "stay quiet" on: no sounds, no spoken answers.
+    var isQuietFocus: Bool {
+        guard settings.bool(.quietDuringFocus), let name = env.focus.activeName else { return false }
+        return FocusParser.isQuiet(name)
     }
 
     var wantsKeyFocus: Bool { mode == .assistant && phase == .textInput }
@@ -252,11 +262,13 @@ final class NotchViewModel: ObservableObject {
         case .toolStarted(_, let displayName):
             workingLabel = displayName
             workingDone = false
+            workingFailed = false
             phase = .executing(displayName)
         case .awaitingConfirmation:
             break // presented by requestConfirmation(_:)
         case .toolFinished(_, let result):
             workingDone = true
+            workingFailed = result.status == .failure
             if let card = result.card { upsert(card) }
         case .finished(let outcome):
             answer = outcome.text
@@ -268,7 +280,7 @@ final class NotchViewModel: ObservableObject {
 
     private func finish(with outcome: AgentOutcome) {
         phase = .answered
-        if settings.ttsEnabled, env.tts.isAvailable, !outcome.text.isEmpty {
+        if settings.ttsEnabled, env.tts.isAvailable, !outcome.text.isEmpty, !isQuietFocus {
             phase = .speaking
             let text = outcome.text
             let id = runID
@@ -326,6 +338,7 @@ final class NotchViewModel: ObservableObject {
         if let tab { self.tab = tab }
         mode = .dashboard
         env.battery.setVisible(true)
+        env.glance.refresh()
         env.music.beginLiveUpdates()
         Task { await reloadHistory() }
     }
@@ -438,7 +451,7 @@ final class NotchViewModel: ObservableObject {
         cards = [.codingSession(info)]
         workingLabel = nil
         phase = .answered
-        NSSound(named: "Glass")?.play()
+        if !isQuietFocus { NSSound(named: "Glass")?.play() }
         scheduleCollapse(after: max(12, settings.double(.autoCollapseSeconds)))
     }
 
@@ -520,7 +533,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     private func playActivationSound() {
-        guard settings.bool(.playActivationSound) else { return }
+        guard settings.bool(.playActivationSound), !isQuietFocus else { return }
         let sound = NSSound(named: "Tink")
         sound?.volume = 0.35
         sound?.play()

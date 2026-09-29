@@ -83,10 +83,13 @@ struct ErrorView: View {
 struct WorkingChip: View {
     let label: String
     let done: Bool
+    var failed = false
 
     var body: some View {
         HStack(spacing: 6) {
-            if done {
+            if done && failed {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
+            } else if done {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.green)
             } else {
                 ProgressView().controlSize(.mini).tint(.green)
@@ -298,7 +301,7 @@ final class AudioBarsNSView: NSView {
         for _ in durations {
             let bar = CALayer()
             bar.backgroundColor = NSColor(calibratedRed: 0.35, green: 0.85, blue: 0.5, alpha: 1).cgColor
-            bar.cornerRadius = 1.5
+            bar.cornerRadius = 1
             bar.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             layer?.addSublayer(bar)
             bars.append(bar)
@@ -309,7 +312,7 @@ final class AudioBarsNSView: NSView {
 
     override func layout() {
         super.layout()
-        let width: CGFloat = 3
+        let width: CGFloat = 2
         let spacing = (bounds.width - width * CGFloat(bars.count)) / CGFloat(max(1, bars.count - 1))
         for (index, bar) in bars.enumerated() {
             bar.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)

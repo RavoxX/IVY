@@ -57,6 +57,7 @@ struct WebSearchTool: IVYTool {
     let displayName = "Web"
     let baseRisk = RiskLevel.low
     let isTerminal = false
+    let requiresModelAnswer = true
     var parameters: [ToolParameter] {
         [ToolParameter("query", .string, "A concise search query.", required: true)]
     }

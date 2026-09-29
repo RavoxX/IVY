@@ -110,7 +110,8 @@ final class NotchWindowController {
         let geometry = NotchGeometry.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                           safeAreaTop: screen.safeAreaInsets.top,
                                           auxiliaryTopLeft: screen.auxiliaryTopLeftArea,
-                                          auxiliaryTopRight: screen.auxiliaryTopRightArea)
+                                          auxiliaryTopRight: screen.auxiliaryTopRightArea,
+                                          scale: screen.backingScaleFactor)
         if geometry != model.geometry {
             Log.ui.info("Notch geometry: notch=\(geometry.hasNotch) width=\(Double(geometry.notchWidth)) band=\(Double(geometry.topBandHeight))")
             model.updateGeometry(geometry)

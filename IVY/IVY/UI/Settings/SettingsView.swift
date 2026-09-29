@@ -79,6 +79,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.autoCollapseSeconds.rawValue) private var autoCollapse = 8.0
     @AppStorage(SettingsKey.dismissOnClickOutside.rawValue) private var dismissOnClick = true
     @AppStorage(SettingsKey.displayPreference.rawValue) private var display = "auto"
+    @AppStorage(SettingsKey.showGlance.rawValue) private var showGlance = true
 
     var body: some View {
         Form {
@@ -92,6 +93,10 @@ struct GeneralSettings: View {
             Section("Notch") {
                 Toggle("Open dashboard when hovering the notch", isOn: $openOnHover)
                 Toggle("Show now playing on the closed notch", isOn: $liveActivity)
+                Toggle("Show today at a glance on the dashboard", isOn: $showGlance)
+                    .onChange(of: showGlance) { _, _ in env.glance.refresh(force: true) }
+                Text("Reminders due today, your next event, battery, unread mail and the active Focus, without asking. Only sources you've already allowed are read.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Display", selection: $display) {
                     Text("Built-in display (notch)").tag("auto")
                     Text("Main display").tag("main")
@@ -122,6 +127,8 @@ struct AISettings: View {
     @AppStorage(SettingsKey.maxResponseTokens.rawValue) private var maxTokens = 320
     @AppStorage(SettingsKey.unloadAfterMinutes.rawValue) private var unloadMinutes = 15
     @AppStorage(SettingsKey.fastCommandRouting.rawValue) private var fastRouting = true
+    @AppStorage(SettingsKey.energyAwareModels.rawValue) private var energyAware = true
+    @AppStorage(SettingsKey.focusAwareReplies.rawValue) private var focusAware = true
 
     var body: some View {
         Form {
@@ -157,10 +164,31 @@ struct AISettings: View {
                     ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
                 }
                 Toggle("Instant commands (skip the model for simple commands)", isOn: $fastRouting)
+                Toggle("Adapt replies to the active Focus", isOn: $focusAware)
             }
+            EnergySection(env: env, energy: env.energy, energyAware: $energyAware)
         }
         .formStyle(.grouped)
         .onAppear { runtime.refresh() }
+    }
+}
+
+struct EnergySection: View {
+    let env: AppEnvironment
+    @ObservedObject var energy: EnergyMonitor
+    @Binding var energyAware: Bool
+
+    var body: some View {
+        Section("Energy") {
+            Toggle("Energy-aware model loading", isOn: $energyAware)
+                .onChange(of: energyAware) { _, _ in env.applyEnergyPolicy(energy.policy) }
+            Text("When your Mac runs hot, is in Low Power Mode or is low on battery, IVY unloads idle models sooner, and right away when it's critical.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Now") {
+                Text("\(energy.snapshot.thermal.displayName) · \(energy.policy.description)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -348,6 +376,7 @@ struct VoiceSettings: View {
     @AppStorage(SettingsKey.kokoroVoice.rawValue) private var voice = "af_heart"
     @AppStorage(SettingsKey.speechRate.rawValue) private var rate = 1.0
     @AppStorage(SettingsKey.ttsVolume.rawValue) private var volume = 0.9
+    @AppStorage(SettingsKey.quietDuringFocus.rawValue) private var quietDuringFocus = true
     @State private var testing = false
 
     var body: some View {
@@ -368,6 +397,7 @@ struct VoiceSettings: View {
             }
             Section("Voice responses (Kokoro + MLX)") {
                 Toggle("Voice responses", isOn: $ttsEnabled)
+                Toggle("Stay quiet during Sleep and Do Not Disturb", isOn: $quietDuringFocus)
                 Text("When on, IVY speaks its answers with Kokoro running locally on MLX. Off by default.")
                     .font(.caption).foregroundStyle(.secondary)
                 ModelRow(model: ModelCatalog.kokoro, runtime: runtime)
@@ -469,6 +499,8 @@ struct IntegrationSettings: View {
     @AppStorage(SettingsKey.spotifyClientID.rawValue) private var spotifyClientID = ""
     @State private var spotifySecret = Keychain.read(account: SpotifyCredentials.keychainAccount) ?? ""
     @AppStorage(SettingsKey.codingProjectsFolder.rawValue) private var projectsFolder = "~/IVY Projects"
+    @AppStorage(SettingsKey.mailOnDashboard.rawValue) private var mailOnDashboard = true
+    @State private var shortcutCount: Int?
 
     var body: some View {
         Form {
@@ -495,6 +527,33 @@ struct IntegrationSettings: View {
                     Text("For the most accurate song matching, create a free app at developer.spotify.com and paste its credentials. The secret is stored in your Keychain.")
                         .font(.caption).foregroundStyle(.secondary)
                     Link("Open Dashboard", destination: URL(string: "https://developer.spotify.com/dashboard")!).font(.caption)
+                }
+            }
+            Section("Mail") {
+                LabeledContent("Apple Mail") {
+                    Text(env.mail.isInstalled ? (env.mail.isRunning ? "Installed · running" : "Installed") : "Not installed")
+                        .foregroundStyle(env.mail.isInstalled ? Color.primary : Color.orange)
+                }
+                StatusRow(title: "Automation permission", status: permissions.mailAutomation)
+                Toggle("Show unread mail on the dashboard", isOn: $mailOnDashboard)
+                Text("Ask “Any new mail from Alex?” or “Search for invoice in my inbox”. IVY reads only the sender, subject and date of recent inbox messages, never message bodies, and only when you ask. The dashboard count is only shown while Mail is open.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Home, Focus & Shortcuts") {
+                LabeledContent("Shortcuts") {
+                    Text(shortcutCount.map { "\($0) found" } ?? "…").foregroundStyle(.secondary)
+                }
+                Text("macOS apps can't control HomeKit or switch Focus directly, so IVY runs your own Shortcuts. Create shortcuts in the Shortcuts app for your scenes and devices (“Lights”, “Thermostat”), then say “Lights to 50%” and IVY passes 50 as the shortcut's input. For Focus, name them “Work Focus”, “Sleep Focus” and “Focus Off” using the Set Focus action. Shortcuts that unlock, open doors or send messages always ask first.")
+                    .font(.caption).foregroundStyle(.secondary)
+                StatusRow(title: "Read the active Focus (Full Disk Access)", status: env.focus.current(maxAge: 0) == .unavailable ? .notDetermined : .granted)
+                HStack {
+                    Button("Open Shortcuts") {
+                        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.shortcuts") {
+                            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                        }
+                    }
+                    Button("Reload") { Task { shortcutCount = await env.shortcutsService.list(refresh: true).count } }
+                    Button("Grant Full Disk Access…") { permissions.open(.fullDiskAccess) }
                 }
             }
             Section("Web") {
@@ -527,6 +586,7 @@ struct IntegrationSettings: View {
         .onAppear {
             permissions.refresh()
             Task { await claude.refreshDetection() }
+            Task { shortcutCount = await env.shortcutsService.list().count }
         }
     }
 }

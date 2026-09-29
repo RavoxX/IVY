@@ -11,9 +11,16 @@
 - 🚀 **Apps, files, URLs, browser** — open apps, folders and websites, or run a Google search in Chrome/Safari.
 - 🌐 **Web search** — when IVY doesn't know something or it needs current info, it searches in the background and answers from the results (with sources).
 - ⏱️ **Timers & alarms** — countdown in the closed notch and an alert when time's up.
-- 🌤️ **Weather, calendar, system** — forecast (Open-Meteo), today's events (EventKit), volume/mute, dark mode, battery, disk space, math.
+- 🌤️ **Weather, calendar, system** — forecast (Open-Meteo), today's events and new events (EventKit), volume/mute, dark mode, battery, disk space, math.
+- 🔎 **File search** — “Find PDFs from last week” searches Spotlight; results can go straight onto the shelf.
+- 📋 **Clipboard actions** — summarize, bullet points, action items, extract emails/links, CSV ⇄ JSON, tables, fix grammar, change tone, translate — without leaving the notch.
+- 📖 **Dictionary** — offline definitions from the macOS dictionary, synonyms and opposites from the local model.
+- ✉️ **Mail** — “Any new mail from Alex?” or “Search for invoice in my inbox” (Apple Mail; sender, subject and date only).
+- 🏠 **Home & Focus via Shortcuts** — “Lights to 50%”, “Set my focus to sleeping”; IVY creates the Focus shortcuts for you (in your system language), and replies adapt to the active Focus. “Turn on Low Power Mode” works too (macOS asks for your password).
+- 🔋 **Energy awareness** — battery health, cycles, temperature and charging advice; models unload sooner when the Mac is hot or low on battery.
+- 🔗 **Chained commands** — “Remind me tomorrow at 9 to call Alex, and put it in my calendar too” runs both tools.
 - 👩‍💻 **Claude Code** — open an interactive Claude Code (or Codex) session, or start one on a task.
-- 🪄 **Notch dashboard** — hover the notch for a media player, a drag-and-drop file shelf with AirDrop, and history (inspired by [boring.notch](https://github.com/TheBoredTeam/boring.notch)).
+- 🪄 **Notch dashboard** — hover the notch for a media player with a seekable progress bar, today at a glance (reminders, next event, unread mail, Focus, battery), a drag-and-drop file shelf with AirDrop, and history (inspired by [boring.notch](https://github.com/TheBoredTeam/boring.notch)).
 - 🔒 **Private by default** — no cloud AI, no telemetry, no stored audio.
 
 > IVY is an independent open-source project and is not affiliated with Apple, Spotify or Anthropic.
@@ -119,7 +126,7 @@ bash IVY/IVY/Resources/Engine/setup_runtime.sh
 | --- | --- |
 | Hold <kbd>⌘</kbd><kbd>⌥</kbd> 0.5 s | IVY opens and listens. Release to ask. |
 | Hold <kbd>⌘</kbd><kbd>⌥</kbd>, release <kbd>⌘</kbd>, press <kbd>⌘</kbd> again | Text field opens. Type and press <kbd>Return</kbd>. |
-| Hover the notch | Dashboard: media player, shelf, history, battery, settings. |
+| Hover the notch | Dashboard: media player, today at a glance, shelf, history, battery, settings. |
 | Drag files onto the notch | Opens the shelf; drop to keep them handy or AirDrop them. |
 | <kbd>Esc</kbd> / click outside | Closes IVY. |
 
@@ -135,6 +142,13 @@ Try:
 - “Open Chrome and search for the Eiffel Tower.” · “Who won the Champions League final?”
 - “What's the weather tomorrow?” · “What's on my calendar today?”
 - “Turn on dark mode.” · “Mute.” · “How much battery do I have?” · “What's 15% of 80?”
+- “Find the budget spreadsheet from yesterday.” · “Where is my tax return PDF?”
+- “Summarize my clipboard.” · “Turn the clipboard into JSON.” · “Translate what I copied to German.”
+- “Define serendipity.” · “Synonyms for happy.” · “What's the opposite of generous?”
+- “Any new mail from Alex?” · “Search for invoice in my inbox.”
+- “Lights to 50%.” · “Turn on Work focus.” · “What focus is on?”
+- “How's my battery health?” · “Should I charge?” · “Is my Mac overheating?”
+- “Remind me tomorrow at 9 to call Alex, and set it up in Calendar too.”
 
 The shortcut, hold time and text-mode window are configurable in **Settings ▸ Shortcuts**.
 
@@ -220,15 +234,29 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 
 **Timers** — `TimerService` schedules a single timer for the next deadline (zero idle cost). The closed notch shows the countdown, and a finished timer pops up with a Stop button and a sound.
 
+**Files** — `file_search` builds an `NSMetadataQuery` (Spotlight) from a name, a kind (PDF, image, spreadsheet…) and a date window, inside your home folder or a named folder. Results show as a card; click to open, drag out, or add them to the shelf.
+
+**Clipboard** — `clipboard` reads plain text only when you ask. Exact jobs (extract emails/links, CSV ⇄ JSON, change case, word count) run in Swift; rewrites (summary, bullets, action items, tables, grammar, tone, translation) go to the local model, which is told to treat the clipboard as data, not instructions. The result card has a Copy button; IVY only replaces your clipboard when you ask it to.
+
+**Dictionary** — definitions come from the dictionaries enabled in Dictionary.app (offline, in their order); synonyms and antonyms come from the local model.
+
+**Mail** — a fixed AppleScript reads sender, subject, date and read state of the newest 150 inbox messages in Apple Mail; filtering happens in Swift, and nothing you say is put into the script. Message bodies are never read. Mail is only launched when you ask about email; the dashboard shows an unread count only while Mail is already open.
+
+**Home, Focus & Shortcuts** — macOS apps can't use HomeKit or switch Focus directly, so IVY runs *your* Shortcuts (`/usr/bin/shortcuts`, by identifier, arguments as an array). Make shortcuts for scenes and devices (“Lights”, “Set Thermostat”); IVY passes values like “50” as the shortcut input. For **Focus**, IVY makes the shortcut itself the first time you ask (“Set my focus to sleeping”): it generates a one-action Set Focus shortcut named after the mode in your system language (Set Focus finds modes by their displayed name, e.g. “Nicht stören”), has macOS sign it (`shortcuts sign`, which contacts Apple's signing service), and opens Shortcuts' **Add Shortcut** sheet. Once you click Add, IVY runs it right away and reuses it from then on. Nothing is added without that click. “Create a shortcut for my Sleep focus” only sets it up. **Low Power Mode** can't be set by Shortcuts on the Mac, so IVY runs the fixed command `pmset -a lowpowermode 1|0` through macOS's administrator prompt. Reading the active Focus needs Full Disk Access (it's stored in `~/Library/DoNotDisturb`). With it, replies adapt (Work → brief and professional, Sleep/Do Not Disturb → shortest possible, no sounds or spoken answers). Shortcuts whose names suggest locks, doors, alarms, payments or messages always ask first.
+
+**Energy** — battery health, cycle count and temperature come from IOKit (`AppleSmartBattery`), thermal state and Low Power Mode from `ProcessInfo`; updates are event-driven. When the Mac is hot, in Low Power Mode or low on battery, idle models unload after 2–3 minutes, or immediately when critical (Settings ▸ AI ▸ Energy).
+
+**Chained commands** — sentences that ask for several actions skip the instant-command path; the model calls one tool per part (it may emit several `<tool_call>` blocks) and IVY reports every result.
+
 **Claude Code** — IVY finds the `claude` CLI (PATH, Homebrew, npm/nvm, `~/.local/bin`, or the copy bundled with the Claude desktop app). “Open Claude Code” opens an interactive session in Terminal. With a task (“…and start building a personal website”) the session starts in `~/IVY Projects/<project>` with that task: interactively in Terminal by default, or headless in the background (`claude -p`, result pops up on the notch). The task text is read from a file at runtime and never spliced into a shell command line. Codex CLI is supported too.
 
 ## Security model
 
 | Risk | Examples | Behavior |
 | --- | --- | --- |
-| Low | read reminders/calendar, now playing, open app/URL, browser/web search, timers, volume, pause, settings | runs immediately |
-| Medium | create/complete reminder, start a coding session, dark mode | runs immediately |
-| High | move file to Trash, allowlisted maintenance commands | **explicit confirmation card** |
+| Low | read reminders/calendar/mail, file search, clipboard, dictionary, battery, now playing, open app/URL, browser/web search, timers, volume, pause, settings | runs immediately |
+| Medium | create/complete reminder, create calendar event, run a shortcut, switch Focus (new shortcuts need your click in Shortcuts), Low Power Mode (macOS asks for your password), start a coding session, dark mode | runs immediately |
+| High | move file to Trash, allowlisted maintenance commands, shortcuts that unlock/open/pay/send | **explicit confirmation card** |
 
 - No tool accepts free-form shell, AppleScript or terminal input.
 - Commands come from a fixed allowlist (`CommandAllowlist`); the model can only choose an ID.
@@ -241,8 +269,10 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 | Microphone | Voice input | For voice |
 | Reminders | To-do list | For reminders |
 | Input Monitoring | Listen-only event tap for ⌘⌥ (most efficient) | Optional — without it IVY polls the modifier state, which needs no permission |
-| Calendars | “What's on my calendar?” | For calendar |
+| Calendars | “What's on my calendar?”, adding events | For calendar |
 | Automation → Spotify | Playback control | For Spotify |
+| Automation → Mail | “Any new mail?” | For mail |
+| Full Disk Access | Reading the active Focus | Optional |
 | Automation → System Events | Dark mode toggle | For dark mode |
 | Accessibility | — | **Not required** |
 
@@ -262,12 +292,14 @@ IVY is not sandboxed because it launches its local engine, Terminal and Claude C
 cd IVY/IVYKit && swift test
 ```
 
-Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, reminder transformations, settings persistence, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
+Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
 
 ## Known limitations
 
 - The ML runtime is Python-based (MLX's reference implementations). It's isolated behind Swift protocols so it can move to `mlx-swift` later.
 - Playing a *specific* song needs an internet lookup (Spotify itself streams online anyway). Public catalogs don't cover every track; add Spotify API credentials for the best matching. If nothing can be verified, IVY opens Spotify's search and says so.
+- HomeKit and Focus go through Shortcuts; macOS offers apps no direct API for them. IVY creates the Focus shortcuts itself (you confirm the import once); Home shortcuts are yours. Switching Low Power Mode asks for an administrator password each time.
+- Mail looks at the newest 150 inbox messages and matches senders and subjects, not message bodies.
 - Web search scrapes DuckDuckGo's HTML page, which can rate-limit heavy use; IVY then falls back to Wikipedia.
 - Headless Claude Code sessions need the CLI to be logged in (`claude` → `/login`).
 - Without Input Monitoring, ⌘⌥ chords combined with other keys (e.g. ⌘⌥Esc) can't be told apart from a hold, so grant it for the best experience.

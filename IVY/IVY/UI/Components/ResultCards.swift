@@ -33,6 +33,16 @@ struct ResultCardView: View {
             WeatherCard(report: report)
         case .events(let title, let items):
             EventsCard(title: title, items: items)
+        case .files(let title, let items):
+            FilesCard(title: title, items: items, shelf: model.env.shelf)
+        case .text(let title, let body):
+            TextResultCard(title: title, text: body)
+        case .definition(let result):
+            DefinitionCard(result: result)
+        case .mail(let title, let items):
+            MailCard(title: title, items: items)
+        case .energy(let snapshot):
+            EnergyCard(snapshot: snapshot)
         }
     }
 }
@@ -133,7 +143,7 @@ struct SpotifyCard: View {
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            PlaybackProgress(state: state)
+            PlaybackProgress(state: state) { music.seek(to: $0) }
             MediaControls(state: state, music: music, large: true)
         }
         .padding(14)
@@ -146,19 +156,42 @@ struct SpotifyCard: View {
 struct PlaybackProgress: View {
     let state: MusicState
     var tint: Color = .white
+    /// Called with the target position when the user scrubs the bar.
+    var onSeek: ((TimeInterval) -> Void)?
+    @State private var dragFraction: Double?
+    @State private var hovering = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let position = state.position(at: context.date)
-            let fraction = state.duration > 0 ? min(1, position / state.duration) : 0
+            let live = state.duration > 0 ? min(1, state.position(at: context.date) / state.duration) : 0
+            let fraction = dragFraction ?? live
+            let position = dragFraction.map { $0 * state.duration } ?? state.position(at: context.date)
+            let active = onSeek != nil && (hovering || dragFraction != nil)
             VStack(spacing: 4) {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.18))
-                        Capsule().fill(tint).frame(width: proxy.size.width * fraction)
+                        Capsule().fill(.white.opacity(0.18)).frame(height: active ? 6 : 4)
+                        Capsule().fill(tint).frame(width: proxy.size.width * fraction, height: active ? 6 : 4)
+                        if active {
+                            Circle().fill(tint).frame(width: 11, height: 11)
+                                .offset(x: proxy.size.width * fraction - 5.5)
+                        }
                     }
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard onSeek != nil, state.duration > 0, proxy.size.width > 0 else { return }
+                            dragFraction = min(1, max(0, value.location.x / proxy.size.width))
+                        }
+                        .onEnded { _ in
+                            if let dragFraction, let onSeek { onSeek(dragFraction * state.duration) }
+                            dragFraction = nil
+                        })
+                    .onHover { hovering = $0 }
                 }
-                .frame(height: 4)
+                .frame(height: 12)
+                .animation(.easeOut(duration: 0.12), value: active)
                 HStack {
                     Text(Self.format(position))
                     Spacer()
@@ -230,13 +263,19 @@ struct LinkRow: View {
     let url: URL
 
     var body: some View {
-        Button { NSWorkspace.shared.open(url) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "globe").foregroundStyle(.white.opacity(0.6))
-                Text(url.absoluteString).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+        if url.scheme == "http" || url.scheme == "https" {
+            Button { NSWorkspace.shared.open(url) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "globe").foregroundStyle(.white.opacity(0.6))
+                    Text(url.absoluteString).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                }
             }
+            .buttonStyle(.plain)
+        } else {
+            // App links (shortcuts://…) read as an action, not a URL.
+            Button(title) { NSWorkspace.shared.open(url) }
+                .buttonStyle(PillButtonStyle(prominent: true))
         }
-        .buttonStyle(.plain)
     }
 }
 

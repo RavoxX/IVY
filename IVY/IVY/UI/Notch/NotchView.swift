@@ -65,7 +65,7 @@ struct LiveActivityView: View {
                 .padding(.trailing, NotchLayout.openTopRadius + 2)
             } else {
                 AudioBarsView(isAnimating: music.state?.status == .playing)
-                    .frame(width: 18, height: band - 14)
+                    .frame(width: 14, height: band - 16)
                     .padding(.trailing, NotchLayout.openTopRadius + 4)
             }
         }
@@ -163,7 +163,7 @@ struct AssistantBody: View {
                     ConfirmationCard(request: confirmation) { model.resolveConfirmation($0) }
                 }
                 if let label = model.workingLabel, model.cards.isEmpty || !model.workingDone {
-                    WorkingChip(label: label, done: model.workingDone)
+                    WorkingChip(label: label, done: model.workingDone, failed: model.workingFailed)
                 }
             }
             if model.phase != .listening {

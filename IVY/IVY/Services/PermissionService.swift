@@ -27,6 +27,7 @@ final class PermissionService: ObservableObject {
         case inputMonitoring = "Privacy_ListenEvent"
         case accessibility = "Privacy_Accessibility"
         case automation = "Privacy_Automation"
+        case fullDiskAccess = "Privacy_AllFiles"
     }
 
     @Published private(set) var microphone: Status = .notDetermined
@@ -34,6 +35,7 @@ final class PermissionService: ObservableObject {
     @Published private(set) var inputMonitoring: Status = .notDetermined
     @Published private(set) var accessibility: Status = .notDetermined
     @Published private(set) var spotifyAutomation: Status = .notDetermined
+    @Published private(set) var mailAutomation: Status = .notDetermined
 
     func refresh() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -54,14 +56,16 @@ final class PermissionService: ObservableObject {
 
     /// `AEDeterminePermissionToAutomateTarget` talks to tccd synchronously and can block
     /// for a long time (indefinitely when the target isn't running), so it runs off the
-    /// main thread and only when Spotify is running.
+    /// main thread and only for apps that are running (Spotify, Mail).
     private func refreshAutomationStatus() {
-        guard !NSRunningApplication.runningApplications(withBundleIdentifier: SpotifyService.bundleID).isEmpty else {
-            return
-        }
-        Task.detached(priority: .utility) { [weak self] in
-            let status = Self.automationStatus(bundleID: SpotifyService.bundleID)
-            await MainActor.run { [weak self] in self?.spotifyAutomation = status }
+        for bundleID in [SpotifyService.bundleID, MailService.bundleID]
+        where !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty {
+            Task.detached(priority: .utility) { [weak self] in
+                let status = Self.automationStatus(bundleID: bundleID)
+                await MainActor.run { [weak self] in
+                    if bundleID == MailService.bundleID { self?.mailAutomation = status } else { self?.spotifyAutomation = status }
+                }
+            }
         }
     }
 

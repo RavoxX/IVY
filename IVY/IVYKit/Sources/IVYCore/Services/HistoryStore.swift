@@ -107,6 +107,15 @@ public actor HistoryStore {
         case ToolName.calendarEvents?: return "Calendar"
         case ToolName.systemVolume?, ToolName.darkMode?, ToolName.systemInfo?: return "System"
         case ToolName.calculate?: return "Calculation"
+        case ToolName.fileSearch?: return "File Search"
+        case ToolName.clipboard?: return "Clipboard"
+        case ToolName.dictionary?: return "Dictionary"
+        case ToolName.mailSearch?: return "Mail"
+        case ToolName.calendarCreate?: return "New Event"
+        case ToolName.shortcutRun?: return "Shortcut"
+        case ToolName.focus?: return "Focus"
+        case ToolName.energyStatus?: return "Battery & Energy"
+        case ToolName.lowPowerMode?: return "Low Power Mode"
         default:
             let words = query.split(separator: " ").prefix(5).joined(separator: " ")
             return words.isEmpty ? "Question" : words

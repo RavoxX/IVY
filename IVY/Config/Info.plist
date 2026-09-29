@@ -7,9 +7,9 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>IVY controls Spotify playback and, when you ask, the system appearance (dark mode).</string>
+	<string>IVY controls Spotify playback, checks your Mail inbox (sender, subject and date only) when you ask about email, and, when you ask, the system appearance (dark mode).</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>IVY reads your calendar when you ask about your schedule. Calendar data stays on your Mac.</string>
+	<string>IVY reads your calendar when you ask about your schedule and adds events when you ask it to. Calendar data stays on your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>IVY reads your calendar when you ask about your schedule.</string>
 	<key>NSMicrophoneUsageDescription</key>

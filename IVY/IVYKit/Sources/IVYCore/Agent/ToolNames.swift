@@ -29,4 +29,13 @@ public enum ToolName {
     public static let darkMode = "dark_mode"
     public static let systemInfo = "system_info"
     public static let calculate = "calculate"
+    public static let fileSearch = "file_search"
+    public static let clipboard = "clipboard"
+    public static let dictionary = "dictionary"
+    public static let mailSearch = "mail_search"
+    public static let calendarCreate = "calendar_create"
+    public static let shortcutRun = "shortcut_run"
+    public static let focus = "focus"
+    public static let energyStatus = "energy_status"
+    public static let lowPowerMode = "low_power_mode"
 }

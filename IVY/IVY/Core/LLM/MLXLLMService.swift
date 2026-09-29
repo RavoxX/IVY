@@ -9,9 +9,16 @@ import IVYCore
 final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     private let engine = EngineProcess(role: "llm")
     private let settings: SettingsStore
+    private let governor: EnergyGovernor
 
-    init(settings: SettingsStore) {
+    init(settings: SettingsStore, governor: EnergyGovernor) {
         self.settings = settings
+        self.governor = governor
+    }
+
+    /// Re-applies the idle timeout (the energy policy can shorten it while the engine runs).
+    func applyIdleTimeout() async {
+        await engine.setIdleTimeout(governor.idleTimeout(userMinutes: settings.int(.unloadAfterMinutes)))
     }
 
     var descriptor: ModelDescriptor {
@@ -39,8 +46,7 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
         guard ModelFiles.isInstalled(at: modelDirectory, kind: .llm) else {
             throw LocalModelError.modelNotInstalled(descriptor.displayName)
         }
-        let minutes = settings.int(.unloadAfterMinutes)
-        await engine.setIdleTimeout(minutes > 0 ? TimeInterval(minutes * 60) : nil)
+        await applyIdleTimeout()
         let started = Date()
         try await engine.load(modelPath: modelDirectory.path)
         Log.llm.info("Model ready in \(Date().timeIntervalSince(started), format: .fixed(precision: 2)) s")
