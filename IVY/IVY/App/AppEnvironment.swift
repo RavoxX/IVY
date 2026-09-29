@@ -50,6 +50,14 @@ final class AppEnvironment {
                 return await self.notch.requestConfirmation(request)
             })
         notch = NotchViewModel(env: self)
+
+        runtime.unloadBeforeDelete = { [llm, whisper, tts] kind in
+            switch kind {
+            case .llm: await llm.unloadModel()
+            case .whisper: await whisper.unload()
+            case .kokoro: await tts.unload()
+            }
+        }
     }
 
     private func registerTools() {

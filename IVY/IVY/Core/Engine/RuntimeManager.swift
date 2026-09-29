@@ -26,6 +26,11 @@ final class RuntimeManager: ObservableObject {
     @Published private(set) var modelStates: [String: ModelState] = [:]
     @Published private(set) var installLog: [String] = []
     @Published private(set) var packageVersions: [String: String] = [:]
+    /// Bytes on disk for each installed model, keyed by model id.
+    @Published private(set) var installedSizes: [String: Int64] = [:]
+
+    /// Called before a model's files are removed so the engine using them can shut down.
+    var unloadBeforeDelete: ((ModelKind) async -> Void)?
 
     private let settings: SettingsStore
     private var downloads: [String: Process] = [:]
@@ -89,9 +94,21 @@ final class RuntimeManager: ObservableObject {
     func refreshModels() {
         for model in ModelCatalog.all {
             if case .downloading = modelStates[model.id] { continue }
-            let installed = ModelFiles.isInstalled(at: model.directory(in: settings.modelsFolder), kind: model.kind)
+            let directory = model.directory(in: settings.modelsFolder)
+            let installed = ModelFiles.isInstalled(at: directory, kind: model.kind)
             modelStates[model.id] = installed ? .installed : .notInstalled
+            installedSizes[model.id] = installed ? ModelFiles.size(of: directory) : nil
         }
+    }
+
+    /// Catalog models that are fully downloaded, largest first.
+    var installedModels: [ModelDescriptor] {
+        ModelCatalog.all.filter(isInstalled).sorted { size(of: $0) > size(of: $1) }
+    }
+
+    /// Bytes the model uses on disk (falls back to the catalog estimate).
+    func size(of model: ModelDescriptor) -> Int64 {
+        installedSizes[model.id] ?? model.approximateBytes
     }
 
     func state(for model: ModelDescriptor) -> ModelState {
@@ -252,6 +269,7 @@ final class RuntimeManager: ObservableObject {
             FileManager.default.createFile(atPath: destination.appendingPathComponent(ModelFiles.completeMarker).path,
                                            contents: Data())
             modelStates[id] = .installed
+            installedSizes[id] = ModelFiles.size(of: destination)
             if isInstallingEverything, !modelStates.values.contains(where: { if case .downloading = $0 { return true } else { return false } }) {
                 isInstallingEverything = false
             }
@@ -268,10 +286,22 @@ final class RuntimeManager: ObservableObject {
         modelStates[model.id] = .notInstalled
     }
 
-    func delete(_ model: ModelDescriptor) {
+    /// Removes a model's files from disk. The engine that uses it is unloaded first.
+    func delete(_ model: ModelDescriptor) async {
         cancelDownload(model)
-        try? FileManager.default.removeItem(at: model.directory(in: settings.modelsFolder))
+        await unloadBeforeDelete?(model.kind)
+        do {
+            try FileManager.default.removeItem(at: model.directory(in: settings.modelsFolder))
+            Log.engine.info("Deleted model \(model.repo, privacy: .public)")
+        } catch {
+            Log.engine.error("Couldn't delete \(model.repo, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
         refreshModels()
+    }
+
+    /// Deletes every downloaded catalog model. The runtime itself stays installed.
+    func deleteAllModels() async {
+        for model in installedModels { await delete(model) }
     }
 }
 

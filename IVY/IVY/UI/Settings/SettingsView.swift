@@ -140,6 +140,7 @@ struct AISettings: View {
                 Text("IVY runs \(ModelCatalog.descriptor(id: modelID)?.displayName ?? "the model") with MLX-LM on your Mac. A custom path overrides the selection.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            DownloadedModelsSection(runtime: runtime)
             Section("Generation") {
                 Picker("Context length", selection: $contextLength) {
                     ForEach([4096, 8192, 16384, 32768], id: \.self) { Text("\($0) tokens").tag($0) }
@@ -216,6 +217,7 @@ struct RuntimeSection: View {
 struct ModelRow: View {
     let model: ModelDescriptor
     @ObservedObject var runtime: RuntimeManager
+    @State private var confirmDelete = false
 
     var body: some View {
         HStack(alignment: .center) {
@@ -231,9 +233,10 @@ struct ModelRow: View {
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([model.directory(in: SettingsStore().modelsFolder)])
                     }
-                    Button("Delete Model", role: .destructive) { runtime.delete(model) }
+                    Button("Delete Model…", role: .destructive) { confirmDelete = true }
                 } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).fixedSize()
+                    .modelDeleteConfirmation(model, runtime: runtime, isPresented: $confirmDelete)
             case .downloading(let progress, let bytes, let total):
                 VStack(alignment: .trailing, spacing: 2) {
                     ProgressView(value: progress).frame(width: 140)
@@ -251,6 +254,85 @@ struct ModelRow: View {
                     .help(RuntimeManager.isRuntimeInstalled ? "Needs \(model.formattedSize) of disk space"
                           : "Install the runtime first")
             }
+        }
+    }
+}
+
+/// Every downloaded model with its size on disk, so space can be freed from IVY itself.
+struct DownloadedModelsSection: View {
+    @ObservedObject var runtime: RuntimeManager
+    @State private var pendingDelete: ModelDescriptor?
+    @State private var confirmDeleteAll = false
+
+    private var totalBytes: Int64 { runtime.installedModels.reduce(0) { $0 + runtime.size(of: $1) } }
+
+    var body: some View {
+        Section {
+            if runtime.installedModels.isEmpty {
+                Text("No models downloaded.").foregroundStyle(.secondary)
+            }
+            ForEach(runtime.installedModels) { model in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.displayName)
+                        Text("\(model.kind.title) · \(ByteCountFormatter.string(fromByteCount: runtime.size(of: model), countStyle: .file))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(role: .destructive) { pendingDelete = model } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+            if runtime.installedModels.count > 1 {
+                HStack {
+                    Spacer()
+                    Button("Delete All Models…", role: .destructive) { confirmDeleteAll = true }
+                }
+            }
+        } header: {
+            HStack {
+                Text("Downloaded models")
+                Spacer()
+                if totalBytes > 0 {
+                    Text(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)).foregroundStyle(.secondary)
+                }
+            }
+        } footer: {
+            Text("Deleted models are removed from your Mac. You can download them again at any time.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .modelDeleteConfirmation(pendingDelete, runtime: runtime, isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }))
+        .confirmationDialog("Delete all downloaded models?", isPresented: $confirmDeleteAll) {
+            Button("Delete All (\(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)))", role: .destructive) {
+                Task { await runtime.deleteAllModels() }
+            }
+        } message: {
+            Text("IVY can't answer, transcribe or speak until you download a model again.")
+        }
+    }
+}
+
+extension View {
+    /// Asks before removing a model's files from disk.
+    func modelDeleteConfirmation(_ model: ModelDescriptor?, runtime: RuntimeManager, isPresented: Binding<Bool>) -> some View {
+        confirmationDialog("Delete \(model?.displayName ?? "model")?", isPresented: isPresented, presenting: model) { model in
+            Button("Delete (\(ByteCountFormatter.string(fromByteCount: runtime.size(of: model), countStyle: .file)))", role: .destructive) {
+                Task { await runtime.delete(model) }
+            }
+        } message: { _ in
+            Text("The model files are removed from your Mac. You can download it again later.")
+        }
+    }
+}
+
+private extension ModelKind {
+    var title: String {
+        switch self {
+        case .llm: return "Language model"
+        case .whisper: return "Speech recognition"
+        case .kokoro: return "Voice"
         }
     }
 }

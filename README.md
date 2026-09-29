@@ -105,6 +105,8 @@ IVY opens a compact setup window:
 
 Everything lives in `~/Library/Application Support/IVY/` (`Runtime/`, `Models/LLM`, `Models/Whisper`, `Models/Kokoro`). Nothing is downloaded silently.
 
+To free disk space, **Settings ▸ AI ▸ Downloaded models** lists every downloaded model with its size on disk. You can delete models one at a time or all at once. IVY unloads a model before deleting it, and you can download it again later.
+
 The runtime installer can also be run manually:
 
 ```bash
