@@ -382,7 +382,10 @@ struct IntegrationSettings: View {
     @ObservedObject var permissions: PermissionService
     @ObservedObject var claude: ClaudeCodeService
     @AppStorage(SettingsKey.onlineTrackLookup.rawValue) private var onlineLookup = true
-    @AppStorage(SettingsKey.codingSessionMode.rawValue) private var sessionMode = CodingSessionInfo.Mode.background.rawValue
+    @AppStorage(SettingsKey.codingSessionMode.rawValue) private var sessionMode = CodingSessionInfo.Mode.terminal.rawValue
+    @AppStorage(SettingsKey.webSearchEnabled.rawValue) private var webSearch = true
+    @AppStorage(SettingsKey.spotifyClientID.rawValue) private var spotifyClientID = ""
+    @State private var spotifySecret = Keychain.read(account: SpotifyCredentials.keychainAccount) ?? ""
     @AppStorage(SettingsKey.codingProjectsFolder.rawValue) private var projectsFolder = "~/IVY Projects"
 
     var body: some View {
@@ -400,7 +403,21 @@ struct IntegrationSettings: View {
                 }
                 StatusRow(title: "Automation permission", status: permissions.spotifyAutomation)
                 Toggle("Find songs online (iTunes Search + song.link)", isOn: $onlineLookup)
-                Text("Used to turn “Play Billie Jean” into a Spotify track without a Spotify account key. Only the song name is sent. When off, IVY opens Spotify's search instead.")
+                Text("Turns “Play Billie Jean” into a Spotify track using public catalogs (Deezer, iTunes, ListenBrainz). Only the song name is sent. When off, IVY opens Spotify's search instead.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Spotify client ID (optional)", text: $spotifyClientID)
+                SecureField("Spotify client secret (optional)", text: $spotifySecret)
+                    .onSubmit { Keychain.write(spotifySecret, account: SpotifyCredentials.keychainAccount) }
+                    .onChange(of: spotifySecret) { _, value in Keychain.write(value, account: SpotifyCredentials.keychainAccount) }
+                HStack {
+                    Text("For the most accurate song matching, create a free app at developer.spotify.com and paste its credentials. The secret is stored in your Keychain.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Link("Open Dashboard", destination: URL(string: "https://developer.spotify.com/dashboard")!).font(.caption)
+                }
+            }
+            Section("Web") {
+                Toggle("Allow web search and weather", isOn: $webSearch)
+                Text("When IVY doesn't know something or needs current information, it searches DuckDuckGo (or Wikipedia) in the background and answers from the results. Weather comes from Open-Meteo. Only the query is sent.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Coding agents") {
@@ -414,10 +431,12 @@ struct IntegrationSettings: View {
                         }
                     }
                 }
-                Picker("Session mode", selection: $sessionMode) {
-                    Text("Background (result pops up on the notch)").tag(CodingSessionInfo.Mode.background.rawValue)
-                    Text("Interactive in Terminal").tag(CodingSessionInfo.Mode.terminal.rawValue)
+                Picker("Tasks run", selection: $sessionMode) {
+                    Text("Interactively in Terminal").tag(CodingSessionInfo.Mode.terminal.rawValue)
+                    Text("In the background (result pops up on the notch)").tag(CodingSessionInfo.Mode.background.rawValue)
                 }
+                Text("“Open Claude Code” always opens an interactive session in Terminal. Background tasks need the CLI to be logged in.")
+                    .font(.caption).foregroundStyle(.secondary)
                 TextField("Projects folder", text: $projectsFolder)
                 Button("Detect Again") { Task { await claude.refreshDetection() } }
             }

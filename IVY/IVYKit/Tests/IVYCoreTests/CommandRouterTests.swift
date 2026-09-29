@@ -77,7 +77,8 @@ struct CommandRouterTests {
         #expect(router.route("open my home folder") == ToolCall(name: ToolName.openFile, arguments: ["path": "~"]))
         // Unknown apps and compound requests go to the model.
         #expect(router.route("open the thing I used yesterday") == nil)
-        #expect(router.route("open safari and search for cats") == nil)
+        #expect(router.route("open safari and search for cats")
+            == ToolCall(name: ToolName.browserSearch, arguments: ["query": "cats", "browser": "Safari"]))
     }
 
     @Test func claudeCodeSession() throws {

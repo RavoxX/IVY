@@ -11,7 +11,7 @@ public struct CommandRouter: Sendable {
     public typealias AppResolver = @Sendable (String) -> String?
 
     private let resolveApp: AppResolver
-    private let now: @Sendable () -> Date
+    let now: @Sendable () -> Date
 
     public init(resolveApp: @escaping AppResolver, now: @escaping @Sendable () -> Date = { Date() }) {
         self.resolveApp = resolveApp
@@ -35,6 +35,13 @@ public struct CommandRouter: Sendable {
         guard !text.isEmpty else { return nil }
 
         if let call = routeSettings(text, original: input) { return call }
+        if let call = routeTimers(text, original: input) { return call }
+        if let call = routeCalculation(text) { return call }
+        if let call = routeSystem(text) { return call }
+        if let call = routeWeather(text) { return call }
+        if let call = routeCalendar(text) { return call }
+        if let call = routeBrowserSearch(text) { return call }
+        if let call = routeWebLookup(text) { return call }
         if let call = routeMusic(text) { return call }
         if let call = routeReminders(text, original: input) { return call }
         if let call = routeCodingSession(text, original: input) { return call }
@@ -115,14 +122,25 @@ public struct CommandRouter: Sendable {
         if let call = routeVolume(text) { return call }
 
         // "play billie jean", "play thriller by michael jackson on spotify"
-        if let captured = capture(text, #"^play (.+?)( on spotify)?$"#) {
-            let query = captured.trimmingCharacters(in: .whitespaces)
+        if let captured = capture(text, #"^play (.+)$"#) {
+            let query = Self.cleanSongQuery(captured)
             let blocked = ["a game", "a video", "the video", "video", "a movie", "movie", "the game"]
             if !query.isEmpty, !blocked.contains(query), !query.hasPrefix("with ") {
                 return ToolCall(name: ToolName.musicPlay, arguments: ["query": .string(query)])
             }
         }
         return nil
+    }
+
+    /// "the song timber from spotify" → "timber"
+    static func cleanSongQuery(_ raw: String) -> String {
+        var query = raw.trimmingCharacters(in: .whitespaces)
+        query = query.replacingOccurrences(of: #"\s+(on|from|in|with|using|via)\s+(spotify|apple music|music)$"#, with: "",
+                                           options: .regularExpression)
+        query = query.replacingOccurrences(of: #"^(me |us )?(the |a |some )?(song|track|music|tune)( called| named)?\s+"#, with: "",
+                                           options: .regularExpression)
+        query = query.replacingOccurrences(of: #"\s+(song|track)$"#, with: "", options: .regularExpression)
+        return query.trimmingCharacters(in: CharacterSet(charactersIn: " \"'“”"))
     }
 
     private func routeVolume(_ text: String) -> ToolCall? {
@@ -205,7 +223,9 @@ public struct CommandRouter: Sendable {
         // Remove the agent's name first so "claude code" doesn't match the verb "code".
         let withoutAgent = text.replacingOccurrences(of: agent.0, with: "agent")
         guard let range = withoutAgent.range(of: #"\b"# + verbs + #"\b.*$"#, options: .regularExpression) else {
-            return nil
+            // "Open Claude Code" / "start a Claude Code session": just open an interactive session.
+            guard agent.0 != "claude" || text.contains("claude code") else { return nil }
+            return ToolCall(name: ToolName.startCodingSession, arguments: ["agent": .string(agent.1)])
         }
         let taskPhrase = String(withoutAgent[range])
         let task = Self.imperative(taskPhrase)
@@ -267,11 +287,11 @@ public struct CommandRouter: Sendable {
 
     // MARK: - Regex helpers
 
-    private func matches(_ text: String, _ pattern: String) -> Bool {
+    func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: .regularExpression) != nil
     }
 
-    private func capture(_ text: String, _ pattern: String, group: Int = 1) -> String? {
+    func capture(_ text: String, _ pattern: String, group: Int = 1) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > group,

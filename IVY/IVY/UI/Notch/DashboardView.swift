@@ -225,15 +225,14 @@ struct ShelfView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(shelf.items, id: \.self) { url in
-                                ShelfItemView(url: url) { shelf.remove(url) }
-                            }
+                    HStack(spacing: 10) {
+                        ForEach(shelf.items.suffix(5), id: \.self) { url in
+                            ShelfItemView(url: url) { shelf.remove(url) }
                         }
-                        .padding(.horizontal, 12)
-                        .frame(maxHeight: .infinity)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.horizontal, 12)
+                    .frame(maxHeight: .infinity)
                     .overlay(alignment: .topTrailing) {
                         Button("Clear") { shelf.clear() }
                             .buttonStyle(.plain)
@@ -298,12 +297,12 @@ struct HistoryListView: View {
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(model.history) { entry in
-                        HistoryRow(entry: entry)
-                    }
+            // Plain stack (no AppKit ScrollView) so the notch mask clips it while animating.
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(model.history.prefix(4)) { entry in
+                    HistoryRow(entry: entry)
                 }
+                Spacer(minLength: 0)
             }
         }
     }

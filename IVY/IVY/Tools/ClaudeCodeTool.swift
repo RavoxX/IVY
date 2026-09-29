@@ -6,35 +6,35 @@ struct ClaudeCodeTool: IVYTool {
     let service: ClaudeCodeService
     let settings: SettingsStore
     let name = ToolName.startCodingSession
-    let description = "Start a Claude Code (or Codex) coding session in a project folder to build or change software."
+    let description = "Open Claude Code (or Codex) in Terminal, optionally with a coding task to start on."
     let displayName = "Claude Code"
     let baseRisk = RiskLevel.medium
     var parameters: [ToolParameter] {
         [
-            ToolParameter("project_name", .string, "Short folder name for the project, e.g. 'personal-website'.", required: true),
-            ToolParameter("task", .string, "What the agent should do, as an imperative sentence.", required: true),
+            ToolParameter("task", .string, "What the agent should build or change, as an imperative sentence. Omit if the user only wants Claude Code opened."),
+            ToolParameter("project_name", .string, "Short folder name, e.g. 'personal-website'. Only when a project is mentioned."),
             ToolParameter("agent", .string, "Which coding agent to use.", enumValues: ClaudeCodeService.Agent.allCases.map(\.rawValue)),
         ]
     }
 
     func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
-        let task = try arguments.requiredString("task")
-        guard task.count <= 2000 else { throw ToolError.invalidArgument("task", "too long") }
-        let project = arguments.string("project_name") ?? ProjectNameSanitizer.projectName(fromTask: task)
+        let task = arguments.string("task")
+        if let task, task.count > 2000 { throw ToolError.invalidArgument("task", "too long") }
+        let project = arguments.string("project_name") ?? task.map { ProjectNameSanitizer.projectName(fromTask: $0) }
         let agent = arguments.string("agent").flatMap { ClaudeCodeService.Agent(rawValue: $0.lowercased()) } ?? .claude
-        let mode = settings.codingSessionMode
 
-        let info = try await service.start(agent: agent, projectName: project, task: task, mode: mode)
-        let subject = Self.subject(from: task, fallback: info.projectName)
+        let info = try await service.start(agent: agent, projectName: project, task: task, mode: settings.codingSessionMode)
         let summary: String
-        switch mode {
-        case .background:
-            summary = "\(agent.displayName) is building \(subject) in the background. I'll show it here when it's done."
-        case .terminal:
+        switch (task, info.mode) {
+        case (nil, _):
+            summary = "Opened \(agent.displayName) in Terminal."
+        case (let task?, .background):
+            summary = "\(agent.displayName) is building \(Self.subject(from: task, fallback: info.projectName)) in the background. I'll show it here when it's done."
+        case (_?, .terminal):
             summary = "\(agent.displayName) is working on \(info.projectName) in Terminal."
         }
         return ToolResult(summary: summary, card: .codingSession(info),
-                          historyTitle: "\(info.projectName): \(task)")
+                          historyTitle: task.map { "\(info.projectName): \($0)" } ?? agent.displayName)
     }
 
     /// "Build a personal website" → "your personal website".

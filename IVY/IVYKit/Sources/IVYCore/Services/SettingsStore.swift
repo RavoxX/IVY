@@ -42,6 +42,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case codingProjectsFolder = "integrations.codingProjectsFolder"
     case spotifyClientID = "integrations.spotifyClientID"
     case onlineTrackLookup = "integrations.onlineTrackLookup"
+    case webSearchEnabled = "integrations.webSearchEnabled"
 
     // Advanced
     case modelsFolder = "advanced.modelsFolder"
@@ -82,10 +83,11 @@ public final class SettingsStore: @unchecked Sendable {
         .activationShortcut: ActivationShortcut.commandOption.rawValue,
         .holdDuration: 0.5,
         .textToggleWindow: 0.5,
-        .codingSessionMode: CodingSessionInfo.Mode.background.rawValue,
+        .codingSessionMode: CodingSessionInfo.Mode.terminal.rawValue,
         .codingProjectsFolder: "~/IVY Projects",
         .spotifyClientID: "",
         .onlineTrackLookup: true,
+        .webSearchEnabled: true,
         .modelsFolder: "",
         .saveHistory: true,
         .logPrompts: false,
@@ -136,7 +138,7 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public var codingSessionMode: CodingSessionInfo.Mode {
-        CodingSessionInfo.Mode(rawValue: string(.codingSessionMode)) ?? .background
+        CodingSessionInfo.Mode(rawValue: string(.codingSessionMode)) ?? .terminal
     }
 
     public var generationOptions: GenerationOptions {

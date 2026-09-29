@@ -23,6 +23,8 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         animationBehavior = .none
+        acceptsMouseMovedEvents = true
+        ignoresMouseEvents = true
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         becomesKeyOnlyIfNeeded = true
         appearance = NSAppearance(named: .darkAqua)
@@ -37,35 +39,42 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-/// Positions the notch panel, resizes it with the content, and implements hover,
-/// drag-to-shelf and click-outside behavior.
+/// Positions the notch panel and implements hover, drag-to-shelf and click-outside.
+///
+/// The window has a **fixed size** large enough for every state and never resizes; the
+/// black shape inside animates with SwiftUI. That keeps the spring animation smooth and
+/// truly "out of the notch". Clicks outside the visible shape pass through because the
+/// panel only accepts mouse events while the pointer is over the shape.
 @MainActor
 final class NotchWindowController {
     let panel = NotchPanel()
+    private let container: NotchContainerView
     private let model: NotchViewModel
     private let settings: SettingsStore
     private var cancellables: Set<AnyCancellable> = []
     private var monitors: [Any] = []
-    private var shrinkWork: DispatchWorkItem?
     private var hoverOpenWork: DispatchWorkItem?
     private var hoverCloseWork: DispatchWorkItem?
-    private var screen: NSScreen?
-    private var currentWindowSize: CGSize = .zero
+
+    static let canvasSize = CGSize(width: NotchLayout.dashboardWidth + NotchLayout.shadowMargin * 2,
+                                   height: 40 + NotchLayout.maxAssistantBody + NotchLayout.shadowMargin + 40)
 
     init(model: NotchViewModel, settings: SettingsStore) {
         self.model = model
         self.settings = settings
         let hosting = FirstMouseHostingView(rootView: NotchRootView(model: model))
         hosting.sizingOptions = []
-        panel.contentView = hosting
+        container = NotchContainerView(content: hosting)
+        panel.contentView = container
 
         model.onKeyFocusChange = { [weak self] focus in self?.setKeyFocus(focus) }
-
-        // Any published change may alter the shape size.
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                DispatchQueue.main.async { self?.updateFrame() }
+                DispatchQueue.main.async {
+                    self?.updateShape(animated: true)
+                    self?.updateMouseHandling()
+                }
             }
             .store(in: &cancellables)
 
@@ -95,9 +104,9 @@ final class NotchWindowController {
         }
     }
 
+    /// Recomputes the notch geometry (monitor, resolution or arrangement changed).
     func relayout() {
         guard let screen = targetScreen() else { return }
-        self.screen = screen
         let geometry = NotchGeometry.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                           safeAreaTop: screen.safeAreaInsets.top,
                                           auxiliaryTopLeft: screen.auxiliaryTopLeftArea,
@@ -106,8 +115,19 @@ final class NotchWindowController {
             Log.ui.info("Notch geometry: notch=\(geometry.hasNotch) width=\(Double(geometry.notchWidth)) band=\(Double(geometry.topBandHeight))")
             model.updateGeometry(geometry)
         }
-        currentWindowSize = .zero
-        updateFrame()
+        panel.setFrame(geometry.panelFrame(size: Self.canvasSize), display: true)
+        panel.orderFrontRegardless()
+        container.layoutSubtreeIfNeeded()
+        updateShape(animated: false)
+        updateMouseHandling()
+    }
+
+    /// Springs the Core Animation notch shape to the model's current size.
+    private func updateShape(animated: Bool) {
+        container.apply(NotchContainerView.Spec(size: model.shapeSize, topRadius: model.topRadius,
+                                                bottomRadius: model.bottomRadius, band: model.geometry.topBandHeight,
+                                                isOpen: model.isOpen),
+                        animated: animated)
     }
 
     /// Re-targets the screen when following the mouse (called on activation).
@@ -115,58 +135,22 @@ final class NotchWindowController {
         if settings.string(.displayPreference) == "mouse" { relayout() }
     }
 
-    private func windowSize(for shape: CGSize) -> CGSize {
-        guard shape.width > 0, shape.height > 0 else { return .zero }
-        let margin = model.mode == .closed ? 0 : NotchLayout.shadowMargin
-        return CGSize(width: shape.width + margin * 2, height: shape.height + margin)
+    /// Rect of the visible shape in screen coordinates.
+    private var shapeRect: CGRect {
+        model.geometry.panelFrame(size: model.shapeSize)
     }
 
-    /// Grows the window immediately (content animates inside) and shrinks it only after
-    /// the closing animation, so nothing is ever clipped mid-animation. Keeping the
-    /// window tight also means clicks next to the notch reach the apps below.
-    private func updateFrame() {
-        guard model.geometry.screenFrame != .zero else { return }
-        let target = windowSize(for: model.shapeSize)
-        let isGrowing = target.width > currentWindowSize.width || target.height > currentWindowSize.height
-
-        if target == .zero {
-            scheduleShrink(to: target)
-            return
-        }
-        if isGrowing || !panel.isVisible {
-            shrinkWork?.cancel()
-            let size = CGSize(width: max(target.width, currentWindowSize.width),
-                              height: max(target.height, currentWindowSize.height))
-            apply(size)
-            if target != size { scheduleShrink(to: target) }
-        } else if target != currentWindowSize {
-            scheduleShrink(to: target)
-        }
+    /// Hover target when closed: the notch (or a thin strip at the top edge without one).
+    private var hotZone: CGRect {
+        let geometry = model.geometry
+        let width = max(geometry.hasNotch ? geometry.notchWidth : 160, model.shapeSize.width)
+        return geometry.panelFrame(size: CGSize(width: width, height: geometry.topBandHeight)).insetBy(dx: -4, dy: -2)
     }
 
-    private func scheduleShrink(to size: CGSize) {
-        shrinkWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let latest = self.windowSize(for: self.model.shapeSize)
-                if latest == .zero {
-                    self.panel.orderOut(nil)
-                    self.currentWindowSize = .zero
-                } else {
-                    self.apply(latest)
-                }
-            }
-        }
-        shrinkWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-    }
-
-    private func apply(_ size: CGSize) {
-        currentWindowSize = size
-        let frame = model.geometry.panelFrame(size: size)
-        panel.setFrame(frame, display: true)
-        if !panel.isVisible { panel.orderFrontRegardless() }
+    /// The panel only takes mouse events while the pointer is over the visible shape.
+    private func updateMouseHandling(location: CGPoint = NSEvent.mouseLocation) {
+        let inside = model.isOpen && shapeRect.contains(location)
+        if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
     }
 
     // MARK: - Focus
@@ -174,7 +158,7 @@ final class NotchWindowController {
     private func setKeyFocus(_ focus: Bool) {
         if focus {
             panel.allowsKey = true
-            updateFrame()
+            panel.ignoresMouseEvents = false
             panel.makeKeyAndOrderFront(nil)
         } else {
             panel.allowsKey = false
@@ -188,19 +172,6 @@ final class NotchWindowController {
     }
 
     // MARK: - Mouse: hover, drag-to-shelf, click outside
-
-    /// Rect of the visible shape in screen coordinates.
-    private func shapeRect(for size: CGSize) -> CGRect {
-        model.geometry.panelFrame(size: size)
-    }
-
-    /// Hover target when closed: the notch (or a thin strip at the top edge without one).
-    private var hotZone: CGRect {
-        let geometry = model.geometry
-        let width = max(geometry.hasNotch ? geometry.notchWidth : 160, model.shapeSize.width)
-        let height = geometry.topBandHeight
-        return geometry.panelFrame(size: CGSize(width: width, height: height)).insetBy(dx: -4, dy: -2)
-    }
 
     private func installMouseMonitors() {
         let moveMask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
@@ -219,6 +190,7 @@ final class NotchWindowController {
 
     private func mouseMoved(dragging: Bool) {
         let location = NSEvent.mouseLocation
+        updateMouseHandling(location: location)
         switch model.mode {
         case .closed:
             guard hotZone.contains(location) else {
@@ -228,8 +200,10 @@ final class NotchWindowController {
             }
             if dragging {
                 // Dragging files onto the notch opens the shelf.
-                let types = NSPasteboard(name: .drag).types ?? []
-                if types.contains(.fileURL) { model.openDashboard(tab: .shelf) }
+                if (NSPasteboard(name: .drag).types ?? []).contains(.fileURL) {
+                    model.openDashboard(tab: .shelf)
+                    panel.ignoresMouseEvents = false
+                }
                 return
             }
             guard settings.bool(.openOnHover), !settings.bool(.paused), hoverOpenWork == nil else { return }
@@ -241,10 +215,10 @@ final class NotchWindowController {
                 }
             }
             hoverOpenWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
 
         case .dashboard:
-            let inside = shapeRect(for: model.shapeSize).insetBy(dx: -10, dy: -10).contains(location)
+            let inside = shapeRect.insetBy(dx: -10, dy: -10).contains(location)
             if inside {
                 hoverCloseWork?.cancel()
                 hoverCloseWork = nil
@@ -253,8 +227,9 @@ final class NotchWindowController {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.hoverCloseWork = nil
-                        let still = self.shapeRect(for: self.model.shapeSize).insetBy(dx: -10, dy: -10)
-                        if !still.contains(NSEvent.mouseLocation) { self.model.closeDashboard() }
+                        if !self.shapeRect.insetBy(dx: -10, dy: -10).contains(NSEvent.mouseLocation) {
+                            self.model.closeDashboard()
+                        }
                     }
                 }
                 hoverCloseWork = work
@@ -262,15 +237,13 @@ final class NotchWindowController {
             }
 
         case .assistant:
-            let inside = shapeRect(for: model.shapeSize).contains(location)
+            let inside = shapeRect.contains(location)
             if inside != model.isHovering { model.hoverChanged(inside) }
         }
     }
 
     private func mouseDownOutside() {
-        guard model.isOpen else { return }
-        if !shapeRect(for: model.shapeSize).contains(NSEvent.mouseLocation) {
-            model.clickedOutside()
-        }
+        guard model.isOpen, !shapeRect.contains(NSEvent.mouseLocation) else { return }
+        model.clickedOutside()
     }
 }

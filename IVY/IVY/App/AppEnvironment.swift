@@ -19,6 +19,8 @@ final class AppEnvironment {
     let appLauncher = AppLauncher()
     let shelf = ShelfStore()
     let battery = BatteryMonitor()
+    let timers = TimerService()
+    let calendar = CalendarService()
     let registry = ToolRegistry()
     private(set) var agent: AgentService!
     private(set) var notch: NotchViewModel!
@@ -62,7 +64,18 @@ final class AppEnvironment {
             MusicNowPlayingTool(context: musicContext),
             MusicVolumeTool(context: musicContext),
             OpenApplicationTool(launcher: appLauncher),
-            OpenURLTool(),
+            OpenURLTool(launcher: appLauncher),
+            BrowserSearchTool(launcher: appLauncher),
+            WebSearchTool(settings: settings),
+            TimerSetTool(timers: timers),
+            TimerListTool(timers: timers),
+            TimerCancelTool(timers: timers),
+            WeatherTool(settings: settings),
+            CalendarTool(service: calendar),
+            SystemVolumeTool(),
+            DarkModeTool(),
+            SystemInfoTool(),
+            CalculatorTool(),
             OpenFileTool(),
             RevealInFinderTool(),
             SettingsTool(open: { [weak self] section in

@@ -100,6 +100,13 @@ public actor HistoryStore {
         case ToolName.startCodingSession?: return "Coding Session"
         case ToolName.moveToTrash?: return "Move to Trash"
         case ToolName.runCommand?: return "Run Command"
+        case ToolName.browserSearch?: return "Browser Search"
+        case ToolName.webSearch?: return "Web Search"
+        case ToolName.timerSet?, ToolName.timerList?, ToolName.timerCancel?: return "Timer"
+        case ToolName.weather?: return "Weather"
+        case ToolName.calendarEvents?: return "Calendar"
+        case ToolName.systemVolume?, ToolName.darkMode?, ToolName.systemInfo?: return "System"
+        case ToolName.calculate?: return "Calculation"
         default:
             let words = query.split(separator: " ").prefix(5).joined(separator: " ")
             return words.isEmpty ? "Question" : words

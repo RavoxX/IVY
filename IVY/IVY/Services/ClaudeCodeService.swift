@@ -111,48 +111,66 @@ final class ClaudeCodeService: ObservableObject {
 
     // MARK: - Sessions
 
-    func start(agent: Agent, projectName: String, task: String, mode: CodingSessionInfo.Mode) async throws -> CodingSessionInfo {
+    /// Starts a session. Without a task this simply opens an interactive session in
+    /// Terminal (like typing `claude` yourself); with a task the agent starts working on it.
+    func start(agent: Agent, projectName: String?, task: String?, mode requestedMode: CodingSessionInfo.Mode) async throws -> CodingSessionInfo {
         guard let executable = await executable(for: agent) else {
             throw ToolError.unavailable("\(agent.displayName) isn't installed.")
         }
-        let slug = ProjectNameSanitizer.sanitize(projectName)
-        let directory = projectsFolder.appendingPathComponent(slug, isDirectory: true)
-        let ivyFolder = directory.appendingPathComponent(".ivy", isDirectory: true)
-        try FileManager.default.createDirectory(at: ivyFolder, withIntermediateDirectories: true)
+        let slug = projectName.map { ProjectNameSanitizer.sanitize($0) }
+        let directory = slug.map { projectsFolder.appendingPathComponent($0, isDirectory: true) } ?? projectsFolder
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        let prompt = """
-        \(task)
+        // Launch scripts, the task prompt and logs live in Application Support, not in the project.
+        let id = UUID()
+        let sessionFolder = AppPaths.applicationSupport.appendingPathComponent("Sessions/\(id.uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionFolder, withIntermediateDirectories: true)
 
-        (Started by IVY, the user's voice assistant. Work inside this folder: \(directory.path). \
-        It may be empty; create the project here and keep it self-contained. When you're done, \
-        summarize what you built in one or two sentences.)
-        """
-        let taskFile = ivyFolder.appendingPathComponent("task.md")
-        try prompt.write(to: taskFile, atomically: true, encoding: .utf8)
+        var taskFile: URL?
+        var prompt: String?
+        if let task, !task.isEmpty {
+            let text = """
+            \(task)
 
-        var info = CodingSessionInfo(agent: agent.displayName, projectName: slug, directory: directory, task: task,
-                                     mode: mode, status: .running)
+            (Started by IVY, the user's voice assistant. Work inside this folder: \(directory.path). \
+            It may be empty; create the project here and keep it self-contained. When you're done, \
+            summarize what you built in one or two sentences.)
+            """
+            let file = sessionFolder.appendingPathComponent("task.md")
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            taskFile = file
+            prompt = text
+        }
+        // An interactive session only makes sense in Terminal.
+        let mode: CodingSessionInfo.Mode = prompt == nil ? .terminal : requestedMode
+
+        var info = CodingSessionInfo(id: id, agent: agent.displayName, projectName: slug ?? directory.lastPathComponent,
+                                     directory: directory, task: task ?? "Interactive session", mode: mode, status: .running)
         switch mode {
         case .terminal:
-            try await launchInTerminal(executable: executable, agent: agent, directory: directory, ivyFolder: ivyFolder)
+            try await launchInTerminal(executable: executable, directory: directory, sessionFolder: sessionFolder, taskFile: taskFile)
             info.detail = "Opened in Terminal"
         case .background:
-            try await launchInBackground(executable: executable, agent: agent, directory: directory, ivyFolder: ivyFolder,
-                                         prompt: prompt, info: info)
+            try await launchInBackground(executable: executable, agent: agent, directory: directory, ivyFolder: sessionFolder,
+                                         prompt: prompt ?? "", info: info)
         }
         sessions.insert(info, at: 0)
         Log.claudeCode.info("Started \(agent.rawValue, privacy: .public) session (\(mode.rawValue, privacy: .public))")
         return info
     }
 
-    private func launchInTerminal(executable: URL, agent: Agent, directory: URL, ivyFolder: URL) async throws {
-        let script = ivyFolder.appendingPathComponent("start.command")
+    private func launchInTerminal(executable: URL, directory: URL, sessionFolder: URL, taskFile: URL?) async throws {
+        let script = sessionFolder.appendingPathComponent("start.command")
+        // The task (if any) is read from a file at runtime, never spliced into the script.
+        let launch = taskFile.map { "exec \(Self.shellQuote(executable.path)) \"$(cat \(Self.shellQuote($0.path)))\"" }
+            ?? "exec \(Self.shellQuote(executable.path))"
         let contents = """
         #!/bin/zsh -l
-        # Generated by IVY. The task prompt is read from .ivy/task.md.
+        # Generated by IVY.
         cd -- \(Self.shellQuote(directory.path)) || exit 1
         export PATH=\(Self.shellQuote(Self.agentPATH(for: executable))):"$PATH"
-        exec \(Self.shellQuote(executable.path)) "$(cat .ivy/task.md)"
+        clear
+        \(launch)
         """
         try contents.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
@@ -222,6 +240,10 @@ final class ClaudeCodeService: ObservableObject {
         }
         info.status = isError ? .failed : .finished
         info.detail = summary.map { String($0.prefix(280)) } ?? (isError ? "The session ended with an error." : "Done.")
+        let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+        if isError, (output + log).localizedCaseInsensitiveContains("not logged in") || (output + log).contains("/login") {
+            info.detail = "\(info.agent) isn't logged in yet. Say “Open Claude Code” and type /login once, then try again."
+        }
         sessions[index] = info
         Log.claudeCode.info("Session finished with status \(status)")
         onSessionFinished?(info)

@@ -46,24 +46,62 @@ struct MusicPlayTool: IVYTool {
 
         guard query.count <= 200 else { throw ToolError.invalidArgument("query", "too long") }
         if context.settings.bool(.onlineTrackLookup) {
-            do {
-                if let track = try await TrackResolver().resolve(query) {
-                    try await spotify.play(uri: track.uri)
-                    let state = await context.settledState(after: .milliseconds(900))
-                    let playing = state.map(MusicToolContext.describe) ?? "\(track.title) by \(track.artist)"
-                    return ToolResult(summary: "Playing \(playing).", card: state.map { .music($0) },
+            let resolver = TrackResolver(credentials: SpotifyCredentials.load(settings: context.settings))
+            let resolution = await resolver.resolve(query)
+            let expected = resolution.expected ?? TrackResolver.Metadata(title: query, artist: "", album: "")
+            var spotifyResponded = false
+            // Try candidates until Spotify really plays the requested song: some regional
+            // IDs are unavailable and Spotify silently substitutes another track.
+            for uri in resolution.uris.prefix(5) {
+                try Task.checkCancellation()
+                do {
+                    try await spotify.play(uri: uri)
+                } catch let error as ToolError {
+                    throw error
+                } catch {
+                    continue
+                }
+                let (state, responded) = await waitForTrack(expected)
+                spotifyResponded = spotifyResponded || responded
+                if let state {
+                    await MainActor.run { context.controller.update(state) }
+                    return ToolResult(summary: "Playing \(MusicToolContext.describe(state)).", card: .music(state),
                                       historyTitle: "Spotify Music Playback")
                 }
-            } catch let error as ToolError {
-                throw error
-            } catch {
-                Log.spotify.error("Track lookup failed: \(error.localizedDescription, privacy: .public)")
+                // Spotify ignores playback commands entirely (signed out, or playing on another device).
+                if !spotifyResponded { break }
+                Log.spotify.info("Candidate didn't play the requested track; trying the next one")
+            }
+            if !resolution.uris.isEmpty {
+                if !spotifyResponded {
+                    return .failure("Spotify isn't responding to playback. Open Spotify and check that you're signed in and playing on this Mac.")
+                }
+                try? await spotify.control(.pause)
             }
         }
         // Honest fallback: show Spotify's search results rather than claiming playback.
         try await spotify.ensureRunning()
         try await spotify.openSearch(query)
-        return ToolResult(summary: "I opened Spotify's search for “\(query)”.", historyTitle: "Spotify Search")
+        return ToolResult(summary: "I couldn't find “\(query)” to play directly, so I opened Spotify's search.",
+                          historyTitle: "Spotify Search")
+    }
+}
+
+extension MusicPlayTool {
+    /// Polls Spotify for up to ~4.5 s until the requested song is playing.
+    /// Returns the matching state, and whether Spotify showed any sign of playback.
+    func waitForTrack(_ expected: TrackResolver.Metadata) async -> (MusicState?, Bool) {
+        var responded = false
+        for _ in 0..<11 {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let state = try? await context.spotify.state() else { continue }
+            if state.hasTrack || state.status == .playing { responded = true }
+            if state.hasTrack, TrackResolver.matches(playing: state.title, expected: expected.title),
+               expected.artist.isEmpty || TrackResolver.artistMatches(playing: state.artist, expected: expected.artist) {
+                return (state, true)
+            }
+        }
+        return (nil, responded)
     }
 }
 
@@ -138,7 +176,14 @@ struct MusicVolumeTool: IVYTool {
     }
 
     func execute(arguments: [String: JSONValue], context toolContext: ToolContext) async throws -> ToolResult {
-        guard context.spotify.isRunning else { return .failure("Spotify isn't running.") }
+        guard context.spotify.isRunning else {
+            // No music app to adjust: change the Mac's output volume instead.
+            let direction = arguments.string("direction")?.lowercased() ?? "up"
+            let level = arguments.int("level")
+            return try await SystemVolumeTool().execute(
+                arguments: level.map { ["action": "set", "level": .number(Double($0))] } ?? ["action": .string(direction)],
+                context: toolContext)
+        }
         let current = try await context.spotify.state().volume
         let target: Int
         if let level = arguments.int("level") {

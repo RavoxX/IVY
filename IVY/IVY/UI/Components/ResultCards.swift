@@ -25,6 +25,14 @@ struct ResultCardView: View {
             ListCard(title: title, rows: rows)
         case .settings:
             EmptyView()
+        case .sources(_, let items):
+            SourcesCard(items: items)
+        case .timers(let timers):
+            TimersCard(timers: timers, service: model.env.timers)
+        case .weather(let report):
+            WeatherCard(report: report)
+        case .events(let title, let items):
+            EventsCard(title: title, items: items)
         }
     }
 }
@@ -352,5 +360,158 @@ struct ConfirmationCard: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.5)))
+    }
+}
+
+// MARK: - Web sources
+
+struct SourcesCard: View {
+    let items: [SourceLink]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Sources").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+            ForEach(items.prefix(3)) { item in
+                Button { NSWorkspace.shared.open(item.url) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "globe").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
+                            Text(item.url.host ?? "").font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - Timers
+
+struct TimersCard: View {
+    let timers: [TimerInfo]
+    @ObservedObject var service: TimerService
+
+    var body: some View {
+        // Prefer live timers (they may have been cancelled or finished since).
+        let live = timers.compactMap { timer in service.timers.first { $0.id == timer.id } }
+        VStack(spacing: 8) {
+            ForEach(live.isEmpty ? timers : live) { timer in
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let remaining = timer.remaining(at: context.date)
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle().stroke(Color.white.opacity(0.12), lineWidth: 4)
+                            Circle()
+                                .trim(from: 0, to: timer.duration > 0 ? CGFloat(remaining / timer.duration) : 0)
+                                .stroke(Color.orange, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                            Image(systemName: timer.isAlarm ? "alarm.fill" : "timer")
+                                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
+                        }
+                        .frame(width: 34, height: 34)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(timer.isAlarm ? timer.endDate.formatted(date: .omitted, time: .shortened) : DurationParser.countdown(remaining))
+                                .font(.system(size: 22, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                            Text(timer.isAlarm ? "\(timer.title) · in \(DurationParser.countdown(remaining))" : timer.title)
+                                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        }
+                        Spacer()
+                        if service.timers.contains(where: { $0.id == timer.id }) {
+                            Button { service.cancel(id: timer.id) } label: {
+                                Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
+                                    .frame(width: 26, height: 26).background(Circle().fill(Color.white.opacity(0.12)))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Cancel")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.06)))
+    }
+}
+
+/// Shown while a finished timer is ringing.
+struct RingingView: View {
+    @ObservedObject var service: TimerService
+    let stop: () -> Void
+
+    var body: some View {
+        if let timer = service.ringing {
+            HStack(spacing: 12) {
+                Image(systemName: timer.isAlarm ? "alarm.waves.left.and.right.fill" : "timer")
+                    .font(.system(size: 24, weight: .semibold)).foregroundStyle(.orange)
+                    .symbolEffect(.bounce, options: .repeating)
+                Text(timer.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                Spacer()
+                Button("Stop", action: stop).buttonStyle(PillButtonStyle(prominent: true))
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.orange.opacity(0.15)))
+        }
+    }
+}
+
+// MARK: - Weather
+
+struct WeatherCard: View {
+    let report: WeatherReport
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: report.symbol)
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 34))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(Int(report.temperature.rounded()))\(report.unit)")
+                    .font(.system(size: 26, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                Text("\(report.location) · \(report.day)").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(report.condition).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                Text("H \(Int(report.high.rounded()))°  L \(Int(report.low.rounded()))°")
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+                if let rain = report.precipitationChance {
+                    Label("\(rain)%", systemImage: "drop.fill").font(.system(size: 11)).foregroundStyle(.cyan.opacity(0.8))
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.06)))
+    }
+}
+
+// MARK: - Calendar
+
+struct EventsCard: View {
+    let title: String
+    let items: [CalendarEventItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+            ForEach(items.prefix(8)) { event in
+                HStack(alignment: .top, spacing: 10) {
+                    RoundedRectangle(cornerRadius: 2).fill(Color.orange).frame(width: 3, height: 30)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(event.title).font(.system(size: 13)).foregroundStyle(.white.opacity(0.92)).lineLimit(1)
+                        Text(event.isAllDay ? "All day" : "\(event.start.formatted(date: .omitted, time: .shortened)) – \(event.end.formatted(date: .omitted, time: .shortened))")
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    Spacer()
+                    if !Calendar.current.isDateInToday(event.start) {
+                        Text(event.start.formatted(.dateTime.weekday(.abbreviated)))
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+            }
+        }
     }
 }

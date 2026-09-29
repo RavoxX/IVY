@@ -1,84 +1,73 @@
 import IVYCore
 import SwiftUI
 
-/// Root of the notch panel. The black shape is anchored to the top center of the window
-/// and animates between the closed notch, the hover dashboard and the assistant.
+/// SwiftUI content of the notch panel. It only positions content at its final size; the
+/// notch silhouette, blur and the spring animation live in `NotchContainerView`
+/// (Core Animation), which masks this view.
 struct NotchRootView: View {
     @ObservedObject var model: NotchViewModel
 
-    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.82)
+    /// Content fades in while the shape grows, and out quickly on close.
+    private var reveal: AnyTransition {
+        .asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.08)),
+                    removal: .opacity.animation(.easeIn(duration: 0.1)))
+    }
 
     var body: some View {
-        let size = model.shapeSize
-        let shape = NotchShape(topCornerRadius: model.topRadius, bottomCornerRadius: model.bottomRadius)
-        ZStack(alignment: .top) {
-            if size != .zero {
-                NotchBackground(isOpen: model.isOpen, band: model.geometry.topBandHeight)
-                    .clipShape(shape)
-                    .frame(width: size.width, height: size.height)
-                    .shadow(color: .black.opacity(model.isOpen ? 0.45 : 0), radius: 18, y: 8)
-
-                content
-                    .frame(width: size.width, height: size.height, alignment: .top)
-                    .clipShape(shape)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(Self.spring, value: size)
-        .animation(Self.spring, value: model.mode)
-        .environment(\.colorScheme, .dark)
+        content
+            .frame(width: model.contentWidth, height: model.mode == .assistant ? nil : model.shapeSize.height, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .environment(\.colorScheme, .dark)
     }
 
     @ViewBuilder private var content: some View {
         switch model.mode {
         case .closed:
             if model.showsLiveActivity {
-                LiveActivityView(model: model, music: model.env.music)
-                    .transition(.opacity)
+                LiveActivityView(model: model, music: model.env.music, timers: model.env.timers)
+                    .transition(.opacity.animation(.easeOut(duration: 0.25).delay(0.15)))
             }
         case .dashboard:
-            DashboardView(model: model)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+            DashboardView(model: model).transition(reveal)
         case .assistant:
-            AssistantView(model: model)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-        }
-    }
-}
-
-/// Opaque black at the top (merges with the camera housing), dark translucent below.
-struct NotchBackground: View {
-    let isOpen: Bool
-    let band: CGFloat
-
-    var body: some View {
-        ZStack {
-            if isOpen { VisualEffectBlur(material: .hudWindow) }
-            LinearGradient(stops: [
-                .init(color: .black, location: 0),
-                .init(color: .black, location: isOpen ? 0.12 : 1),
-                .init(color: .black.opacity(isOpen ? 0.9 : 1), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
+            AssistantView(model: model).transition(reveal)
         }
     }
 }
 
 // MARK: - Closed live activity
 
-/// Closed-notch live activity: album art on the left wing, audio bars on the right.
+/// Closed-notch live activity: album art (or a timer icon) on the left wing, audio bars
+/// (or the timer countdown) on the right wing.
 struct LiveActivityView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var music: MusicController
+    @ObservedObject var timers: TimerService
 
     var body: some View {
         let band = model.geometry.topBandHeight
         HStack(spacing: 0) {
-            ArtworkView(url: music.state?.artworkURL, size: band - 10, cornerRadius: 5)
-                .padding(.leading, NotchLayout.openTopRadius)
+            Group {
+                if music.isPlaying {
+                    ArtworkView(url: music.state?.artworkURL, size: band - 10, cornerRadius: 5)
+                } else if timers.next != nil {
+                    Image(systemName: "timer").font(.system(size: 13, weight: .semibold)).foregroundStyle(.orange)
+                }
+            }
+            .padding(.leading, NotchLayout.openTopRadius)
             Spacer(minLength: 0)
-            AudioBarsView(isAnimating: music.state?.status == .playing)
-                .frame(width: 18, height: band - 14)
-                .padding(.trailing, NotchLayout.openTopRadius + 4)
+            if let next = timers.next {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(DurationParser.countdown(next.remaining(at: context.date)))
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.orange)
+                }
+                .padding(.trailing, NotchLayout.openTopRadius + 2)
+            } else {
+                AudioBarsView(isAnimating: music.state?.status == .playing)
+                    .frame(width: 18, height: band - 14)
+                    .padding(.trailing, NotchLayout.openTopRadius + 4)
+            }
         }
         .frame(height: band)
     }
@@ -94,21 +83,31 @@ struct AssistantView: View {
             AssistantHeader(model: model)
                 .frame(height: model.geometry.topBandHeight)
 
-            ScrollView(.vertical, showsIndicators: false) {
-                AssistantBody(model: model)
-                    .padding(.horizontal, 18)
-                    .padding(.top, 4)
-                    .padding(.bottom, 14)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(GeometryReader { proxy in
-                        Color.clear.preference(key: BodyHeightKey.self, value: proxy.size.height)
-                    })
+            // AppKit-backed ScrollViews ignore SwiftUI masks (they'd poke out of the notch
+            // while it animates), so only scroll when the content really overflows.
+            if model.assistantBodyHeight > NotchLayout.maxAssistantBody {
+                ScrollView(.vertical, showsIndicators: false) { measuredBody }
+                    .frame(height: NotchLayout.maxAssistantBody)
+            } else {
+                measuredBody
             }
-            .scrollDisabled(model.assistantBodyHeight <= NotchLayout.maxAssistantBody)
         }
         .onPreferenceChange(BodyHeightKey.self) { height in
             if abs(model.assistantBodyHeight - height) > 0.5 { model.assistantBodyHeight = height }
         }
+    }
+}
+
+extension AssistantView {
+    var measuredBody: some View {
+        AssistantBody(model: model)
+            .padding(.horizontal, 18)
+            .padding(.top, 4)
+            .padding(.bottom, 14)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: BodyHeightKey.self, value: proxy.size.height)
+            })
     }
 }
 
@@ -149,6 +148,7 @@ struct AssistantBody: View {
             case .listening:
                 ListeningView(level: model.audioLevel, shortcut: model.env.settings.activationShortcut)
             default:
+                RingingView(service: model.env.timers) { model.stopButtonTapped() }
                 if !model.query.isEmpty {
                     QueryView(text: model.query)
                 }

@@ -160,6 +160,7 @@ public actor AgentService {
         var cards: [ResultCard] = []
         var toolNames: [String] = []
         var lastResults: [ToolResult] = []
+        var nudged = false
         let tools = registry.schemas
 
         for iteration in 0..<maxToolIterations {
@@ -176,6 +177,18 @@ public actor AgentService {
 
             if parsed.toolCalls.isEmpty {
                 let text = parsed.text.isEmpty ? (lastResults.last?.summary ?? "Done.") : parsed.text
+                // Never let the model claim an action it didn't perform through a tool.
+                if toolNames.isEmpty, ActionClaimGuard.isUnbacked(answer: text, query: query) {
+                    if !nudged, iteration < maxToolIterations - 1 {
+                        nudged = true
+                        Log.agent.info("Model claimed an action without a tool call; retrying")
+                        messages.append(.assistant(parsed.text))
+                        messages.append(.user(ActionClaimGuard.nudge))
+                        continue
+                    }
+                    return AgentOutcome(text: ActionClaimGuard.fallback, cards: cards, toolNames: toolNames,
+                                        status: .failure, usedModel: true)
+                }
                 return AgentOutcome(text: text, cards: cards, toolNames: toolNames,
                                     status: lastResults.contains { $0.status == .failure } ? .failure : .success,
                                     usedModel: true)
@@ -281,6 +294,13 @@ public enum SystemPrompt {
     If a tool fails, say so briefly.
     For dates and times in tool arguments, repeat the user's own words (for example \
     "tomorrow at 5pm") unless they gave an exact date.
+    Never say you did something (opened, played, set, searched, created…) unless a tool \
+    result in this conversation confirms it. If no tool fits, say briefly that you can't do it yet.
+    Use timer_set for timers and alarms (not reminders). Use browser_search when the user wants \
+    a search or page shown in a browser.
+    If a question needs current or specific facts you're not sure about (news, prices, sports, \
+    recent events, people, products, anything after your training data), call web_search first \
+    and answer from its results.
     """
 
     public static func contextLine(now: Date, locale: Locale = .current) -> String {
@@ -288,5 +308,30 @@ public enum SystemPrompt {
         formatter.locale = locale
         formatter.dateFormat = "EEEE, d MMMM yyyy, HH:mm"
         return "[Now: \(formatter.string(from: now))]"
+    }
+}
+
+/// Detects replies that claim an action ("I opened Chrome…") without any tool call.
+public enum ActionClaimGuard {
+    public static let nudge = """
+    [IVY] You didn't call a tool, so nothing actually happened. If the request needs an action \
+    or live information, call the right tool now. Otherwise answer without claiming any action.
+    """
+    public static let fallback = "I couldn't do that. I don't have a tool for it yet."
+
+    static let claimPattern = #"(^|\b)(i('ve| have)? |i'll |i will )?(just )?(opened|opening|launched|launching|started|starting|played|playing|searched|searching|set|created|creating|added|turned|paused|sent|scheduled|closed|deleted|moved|booked|looked up|found and opened)\b|^done\b|\bis (now )?(open|playing|running|set|on|off)\b"#
+    static let commandPattern = #"^(please |can you |could you |hey ivy,? )?(open|launch|start|play|pause|search|google|set|create|make|remind|add|turn|switch|close|quit|send|call|text|email|delete|move|book|schedule|show me|go to|find me|download|install|run)\b"#
+    static let explainPattern = #"\b(you can|you could|to do (this|that|so)|follow these|steps?:|click|navigate to|go to the)\b"#
+
+    public static func isUnbacked(answer: String, query: String) -> Bool {
+        let text = answer.lowercased()
+        let request = query.lowercased().trimmingCharacters(in: .whitespaces)
+        let claims = text.range(of: claimPattern, options: .regularExpression) != nil
+        let isCommand = request.range(of: commandPattern, options: .regularExpression) != nil
+        let explains = text.range(of: explainPattern, options: .regularExpression) != nil
+        if isCommand && (claims || explains) { return true }
+        // Past-tense first-person claims are suspicious even for non-command phrasing.
+        return text.range(of: #"^(i('ve| have)? )(opened|launched|started|played|searched|set|created|added|turned on|turned off)\b"#,
+                          options: .regularExpression) != nil
     }
 }

@@ -23,12 +23,16 @@ struct OpenApplicationTool: IVYTool {
 }
 
 struct OpenURLTool: IVYTool {
+    let launcher: AppLauncher
     let name = ToolName.openURL
-    let description = "Open a website in the default browser."
+    let description = "Open a website, optionally in a specific browser."
     let displayName = "Open Website"
     let baseRisk = RiskLevel.low
     var parameters: [ToolParameter] {
-        [ToolParameter("url", .string, "The web address, e.g. 'github.com' or 'https://apple.com'.", required: true)]
+        [
+            ToolParameter("url", .string, "The web address, e.g. 'github.com' or 'https://apple.com'.", required: true),
+            ToolParameter("browser", .string, "Optional browser app, e.g. 'Google Chrome'."),
+        ]
     }
 
     static func normalize(_ raw: String) -> URL? {
@@ -42,10 +46,10 @@ struct OpenURLTool: IVYTool {
     func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
         let raw = try arguments.requiredString("url")
         guard let url = Self.normalize(raw) else { throw ToolError.invalidArgument("url", "only web addresses are allowed") }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
-        guard opened else { return .failure("I couldn't open \(url.host ?? raw).") }
+        let browser = try await BrowserOpener.open(url, browser: arguments.string("browser"), launcher: launcher)
         let host = url.host?.replacingOccurrences(of: "www.", with: "") ?? raw
-        return ToolResult(summary: "Opened \(host).", card: .link(title: host, url: url), historyTitle: "Open \(host)")
+        return ToolResult(summary: "Opened \(host)\(browser.map { " in \($0)" } ?? "").", card: .link(title: host, url: url),
+                          historyTitle: "Open \(host)")
     }
 }
 

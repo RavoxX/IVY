@@ -55,7 +55,12 @@ final class NotchViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        env.timers.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         env.claudeCode.onSessionFinished = { [weak self] info in self?.showSessionResult(info) }
+        env.timers.onFire = { [weak self] timer in self?.showTimerFinished(timer) }
         Task { await reloadHistory() }
     }
 
@@ -66,7 +71,16 @@ final class NotchViewModel: ObservableObject {
     }
 
     var showsLiveActivity: Bool {
-        settings.bool(.showLiveActivity) && env.music.isPlaying
+        !env.timers.timers.isEmpty || (settings.bool(.showLiveActivity) && env.music.isPlaying)
+    }
+
+    /// Width the content is laid out at (the shape reveals it while animating).
+    var contentWidth: CGFloat {
+        switch mode {
+        case .closed: return shapeSize.width
+        case .dashboard: return NotchLayout.dashboardWidth
+        case .assistant: return assistantWidth
+        }
     }
 
     /// Size of the visible black shape for the current state.
@@ -76,9 +90,12 @@ final class NotchViewModel: ObservableObject {
         case .closed:
             let base = geometry.hasNotch ? geometry.notchWidth : 0
             if showsLiveActivity {
-                return CGSize(width: max(base, 150) + NotchLayout.liveActivityWing * 2, height: band)
+                let wing = env.timers.timers.isEmpty ? NotchLayout.liveActivityWing : NotchLayout.liveActivityWing + 18
+                return CGSize(width: max(base, 150) + wing * 2, height: band)
             }
-            return geometry.hasNotch ? CGSize(width: base, height: band) : .zero
+            // Without a notch the closed shape is a zero-height sliver at the top edge,
+            // so opening still grows downward from the top center.
+            return CGSize(width: geometry.hasNotch ? base : 180, height: geometry.hasNotch ? band : 0)
         case .dashboard:
             return CGSize(width: NotchLayout.dashboardWidth, height: band + NotchLayout.dashboardBodyHeight)
         case .assistant:
@@ -336,6 +353,7 @@ final class NotchViewModel: ObservableObject {
         runID = UUID()
         speakTask?.cancel()
         Task { await env.tts.stop() }
+        env.timers.stopRinging()
         onKeyFocusChange?(false)
         mode = .closed
         phase = .answered
@@ -348,6 +366,11 @@ final class NotchViewModel: ObservableObject {
     }
 
     func stopButtonTapped() {
+        if env.timers.ringing != nil {
+            env.timers.stopRinging()
+            dismiss()
+            return
+        }
         if phase == .speaking {
             speakTask?.cancel()
             Task { await env.tts.stop() }
@@ -415,6 +438,22 @@ final class NotchViewModel: ObservableObject {
         phase = .answered
         NSSound(named: "Glass")?.play()
         scheduleCollapse(after: max(12, settings.double(.autoCollapseSeconds)))
+    }
+
+    // MARK: - Timers
+
+    /// A timer or alarm went off: pop up on the notch with a Stop button.
+    func showTimerFinished(_ timer: TimerInfo) {
+        if mode == .dashboard { closeDashboard() }
+        if mode == .assistant, phase.isBusy || phase == .listening || phase == .textInput { return }
+        runID = UUID()
+        mode = .assistant
+        query = ""
+        answer = timer.label.map { "\($0.capitalizedFirst) timer is done." } ?? (timer.isAlarm ? "It's \(Date().formatted(date: .omitted, time: .shortened))." : "Time's up!")
+        cards = []
+        workingLabel = nil
+        phase = .answered
+        scheduleCollapse(after: 30)
     }
 
     // MARK: - History
