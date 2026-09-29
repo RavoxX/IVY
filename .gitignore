@@ -19,10 +19,10 @@ __pycache__/
 *.pyc
 .venv/
 
-# Local models / runtime never belong in git
+# Local models / runtime never belong in git (the Swift sources in IVYCore/Models do)
 *.safetensors
 *.npz
-Models/
+/Models/
 
 # Release artifacts
 dist/

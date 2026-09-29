@@ -3,7 +3,7 @@
 **IVY is a private AI assistant that lives in your MacBook's notch.** Hold <kbd>⌘</kbd><kbd>⌥</kbd>, ask a question, and IVY answers from a dark panel that grows out of the notch. Speech recognition, the language model and text-to-speech all run **locally on Apple Silicon** with [MLX](https://github.com/ml-explore/mlx).
 
 - 🎙️ **Voice or text** — hold <kbd>⌘</kbd><kbd>⌥</kbd> for 0.5 s to talk; release <kbd>⌘</kbd> and press it again to type.
-- 🧠 **Local LLM** — Qwen3-4B (4-bit) via MLX-LM, with native tool calling.
+- 🧠 **Local LLM** — Qwen3-4B (4-bit) via MLX-LM by default, with native tool calling; 1.7B, 8B and 14B are one click away in Settings.
 - 👂 **Local speech-to-text** — MLX Whisper (large-v3-turbo).
 - 🗣️ **Local TTS** — Kokoro-82M via MLX (`mlx-audio`). Off by default.
 - ✅ **Reminders** — read, create and complete Apple Reminders through EventKit.
@@ -216,7 +216,7 @@ MLX's most mature LLM, Whisper and Kokoro implementations are Python packages, s
 
 ### Changing the model
 
-Settings ▸ AI lets you pick Qwen3 1.7B / 4B / 8B or point **Model path** at any MLX-format chat model folder. Tool calling works best with models whose chat template supports `tools` (Qwen2.5/Qwen3 family).
+Settings ▸ AI lets you pick Qwen3 1.7B / 4B / 8B / 14B (14B writes best but is about half as fast as 8B; use it with 24 GB+ memory) or point **Model path** at any MLX-format chat model folder. Tool calling works best with models whose chat template supports `tools` (Qwen2.5/Qwen3 family).
 
 ## Integrations
 
