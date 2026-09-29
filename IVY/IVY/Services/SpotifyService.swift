@@ -39,7 +39,80 @@ final class AppleScriptRunner: @unchecked Sendable {
 /// No Spotify Web API account or login is required.
 final class SpotifyService: @unchecked Sendable {
     static let bundleID = "com.spotify.client"
+    static let playbackNotification = Notification.Name("com.spotify.client.PlaybackStateChanged")
     private let runner = AppleScriptRunner.shared
+
+    // Spotify 1.3's AppleScript *getters* can go stale (state "stopped", volume 0, no
+    // current track) while commands keep working. Its PlaybackStateChanged distributed
+    // notification stays accurate, so IVY keeps the latest one as a second source of truth.
+    private let lock = NSLock()
+    private var notified: MusicState?
+    private var artworkCache: [String: URL] = [:]
+    private var lastSetVolume: Int?
+    private var observer: NSObjectProtocol?
+
+    /// Called (on any thread) whenever Spotify broadcasts a playback change.
+    var onPlaybackChange: (@Sendable (MusicState) -> Void)?
+
+    init() {
+        observer = DistributedNotificationCenter.default().addObserver(
+            forName: Self.playbackNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            self?.handleNotification(notification.userInfo ?? [:])
+        }
+    }
+
+    /// Latest state from Spotify's notifications, if any.
+    var notifiedState: MusicState? { lock.withLock { notified } }
+
+    static func parseNotification(_ info: [AnyHashable: Any]) -> MusicState? {
+        guard let rawState = info["Player State"] as? String else { return nil }
+        let status: PlaybackStatus
+        switch rawState.lowercased() {
+        case "playing": status = .playing
+        case "paused": status = .paused
+        default: status = .stopped
+        }
+        func number(_ key: String) -> Double? { (info[key] as? NSNumber)?.doubleValue ?? (info[key] as? Double) }
+        return MusicState(status: status, title: info["Name"] as? String ?? "", artist: info["Artist"] as? String ?? "",
+                          album: info["Album"] as? String ?? "", trackID: info["Track ID"] as? String,
+                          duration: (number("Duration") ?? 0) / 1000, position: number("Playback Position") ?? 0,
+                          capturedAt: Date())
+    }
+
+    private func handleNotification(_ info: [AnyHashable: Any]) {
+        guard var state = Self.parseNotification(info) else { return }
+        lock.withLock {
+            if let id = state.trackID { state.artworkURL = artworkCache[id] }
+            if let previous = notified, previous.trackID == state.trackID {
+                state.shuffling = previous.shuffling
+                state.repeating = previous.repeating
+                state.volume = previous.volume
+            }
+            notified = state
+        }
+        onPlaybackChange?(state)
+        if state.artworkURL == nil, let id = state.trackID {
+            Task { [weak self] in
+                guard let self, let url = await Self.fetchArtwork(trackURI: id) else { return }
+                let updated: MusicState? = self.lock.withLock {
+                    self.artworkCache[id] = url
+                    guard self.notified?.trackID == id else { return nil }
+                    self.notified?.artworkURL = url
+                    return self.notified
+                }
+                if let updated { self.onPlaybackChange?(updated) }
+            }
+        }
+    }
+
+    /// Album art via Spotify's public oEmbed endpoint (the AppleScript `artwork url` can be stale).
+    static func fetchArtwork(trackURI: String) async -> URL? {
+        guard let id = trackURI.split(separator: ":").last,
+              let url = URL(string: "https://open.spotify.com/oembed?url=https://open.spotify.com/track/\(id)"),
+              let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return JSONValue.parse(String(decoding: data, as: UTF8.self))?["thumbnail_url"]?.stringValue.flatMap(URL.init(string:))
+    }
 
     var appURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleID) }
     var isInstalled: Bool { appURL != nil }
@@ -82,8 +155,36 @@ final class SpotifyService: @unchecked Sendable {
             return {ps, name of t, artist of t, album of t, artwork url of t, id of t, duration of t, player position, shuffling, repeating, sound volume}
         end tell
         """
-        let descriptor = try await execute(script)
-        return Self.parseState(descriptor)
+        let scripted: MusicState?
+        do {
+            scripted = Self.parseState(try await execute(script))
+        } catch let error as ToolError {
+            throw error
+        } catch {
+            scripted = nil
+        }
+        let fromNotification = notifiedState
+        // Prefer the scripted state when it's live; otherwise trust the notification.
+        if var live = scripted, live.hasTrack, live.status != .stopped {
+            lock.withLock {
+                if let id = live.trackID, live.artworkURL == nil { live.artworkURL = artworkCache[id] }
+                if live.volume == 0, let volume = lastSetVolume { live.volume = volume }
+            }
+            return live
+        }
+        if var notified = fromNotification, notified.hasTrack {
+            notified.volume = lock.withLock { lastSetVolume } ?? notified.volume
+            return notified
+        }
+        if let scripted { return scripted }
+        throw ToolError.unavailable("Spotify didn't report its playback state.")
+    }
+
+    /// Current volume; Spotify 1.3 may report 0 while playing, so fall back to what IVY last set.
+    func currentVolume() async -> Int {
+        let scripted = Int((try? await execute("tell application id \"\(Self.bundleID)\" to return sound volume"))?.int32Value ?? 0)
+        if scripted > 0 { return scripted }
+        return lock.withLock { lastSetVolume } ?? 50
     }
 
     static func parseState(_ descriptor: NSAppleEventDescriptor) -> MusicState {
@@ -151,6 +252,7 @@ final class SpotifyService: @unchecked Sendable {
         guard isRunning else { throw ToolError.unavailable("Spotify isn't running.") }
         let clamped = max(0, min(100, level))
         try await execute("tell application id \"\(Self.bundleID)\" to set sound volume to \(clamped)")
+        lock.withLock { lastSetVolume = clamped }
     }
 
     /// Opens Spotify's search for a query (fallback when a track can't be resolved).

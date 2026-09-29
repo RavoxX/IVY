@@ -33,10 +33,32 @@
 | Mac | Apple Silicon (M1 or later). Tuned for a fanless MacBook Air. |
 | macOS | 26 or later |
 | Xcode | 26 or later (Swift 6 toolchain) |
-| Disk | ~5 GB for the runtime and default models |
+| Disk | ~6 GB for the runtime and default models |
 | Memory | 8 GB works, 16 GB recommended |
 
 IVY works on displays without a notch too — it attaches to the top center of the screen.
+
+## Install (DMG)
+
+1. Download `IVY-<version>.dmg` from the [Releases](https://github.com/RavoxX/IVY/releases) page, open it and drag **IVY** into **Applications**.
+2. Open IVY. If macOS says it can't verify the developer, right-click IVY ▸ **Open** (needed once for builds that aren't notarized).
+3. In the setup window click **Install Everything**. IVY downloads its local AI once from the web: the MLX runtime (~1.5 GB) and the models (~4.3 GB). The size is shown before anything starts. After that, everything runs offline.
+4. Hold <kbd>⌘</kbd><kbd>⌥</kbd> and talk.
+
+The DMG itself is small (~3 MB) because models are never bundled into the app.
+
+### Building the DMG
+
+```bash
+scripts/build_dmg.sh            # → dist/IVY-<version>.dmg
+```
+
+The script builds a Release version (Apple Silicon), signs it with a *Developer ID Application* identity when your keychain has one (otherwise with your Apple Development identity), and creates a drag-to-Applications DMG. For public releases, notarize it:
+
+```bash
+xcrun notarytool store-credentials ivy-notary --apple-id <id> --team-id <team> --password <app-specific-password>
+IVY_NOTARY_PROFILE=ivy-notary scripts/build_dmg.sh
+```
 
 ## Build & run
 
@@ -60,7 +82,7 @@ IVY opens a compact setup window:
 
 1. Grant **Microphone** access (and optionally **Reminders** and **Input Monitoring**).
 2. Detects Spotify and Claude Code.
-3. **Install Runtime** creates a private Python environment with MLX packages (~600 MB).
+3. **Install Runtime** creates a private Python environment with MLX packages (~1.5 GB).
 4. **Download** the models. Sizes are shown before anything is downloaded:
 
 | Model | Purpose | Size |

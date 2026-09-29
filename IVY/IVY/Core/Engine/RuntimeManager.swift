@@ -29,6 +29,31 @@ final class RuntimeManager: ObservableObject {
 
     private let settings: SettingsStore
     private var downloads: [String: Process] = [:]
+    /// Models queued by "Install Everything"; downloaded as soon as the runtime is ready.
+    private var queuedModels: [ModelDescriptor] = []
+    @Published private(set) var isInstallingEverything = false
+
+    /// One-click install used by the setup window: runtime first, then every model.
+    func installEverything(_ models: [ModelDescriptor]) {
+        queuedModels = models.filter { !isInstalled($0) }
+        isInstallingEverything = true
+        if runtimeStatus == .ready {
+            startQueuedDownloads()
+        } else if runtimeStatus == .unknown, Self.isRuntimeInstalled {
+            refresh() // The doctor check starts the queued downloads once it confirms the runtime.
+        } else if case .installing = runtimeStatus {
+            // Downloads start when the running installation finishes.
+        } else {
+            installRuntime()
+        }
+    }
+
+    private func startQueuedDownloads() {
+        let models = queuedModels
+        queuedModels = []
+        models.forEach(download)
+        if models.isEmpty { isInstallingEverything = false }
+    }
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -91,6 +116,7 @@ final class RuntimeManager: ObservableObject {
         let required = ["mlx", "mlx_lm", "mlx_whisper", "mlx_audio", "misaki"]
         let missing = required.filter { packages[$0]?.stringValue == nil }
         runtimeStatus = missing.isEmpty ? .ready : .failed("Missing packages: \(missing.joined(separator: ", "))")
+        if runtimeStatus == .ready, !queuedModels.isEmpty { startQueuedDownloads() }
     }
 
     // MARK: - Runtime installation
@@ -128,6 +154,8 @@ final class RuntimeManager: ObservableObject {
                     self.refresh()
                 } else {
                     self.runtimeStatus = .failed("Runtime installation failed (exit \(status)). See the log for details.")
+                    self.queuedModels = []
+                    self.isInstallingEverything = false
                 }
             }
         }
@@ -224,6 +252,9 @@ final class RuntimeManager: ObservableObject {
             FileManager.default.createFile(atPath: destination.appendingPathComponent(ModelFiles.completeMarker).path,
                                            contents: Data())
             modelStates[id] = .installed
+            if isInstallingEverything, !modelStates.values.contains(where: { if case .downloading = $0 { return true } else { return false } }) {
+                isInstallingEverything = false
+            }
         case "error":
             modelStates[id] = .failed(message["message"]?.stringValue ?? "Download failed.")
         default:

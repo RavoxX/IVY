@@ -204,7 +204,7 @@ struct RuntimeSection: View {
     @ViewBuilder private var statusLabel: some View {
         switch runtime.runtimeStatus {
         case .unknown: Label("Checking…", systemImage: "hourglass")
-        case .missing: Label("Not installed (Python + MLX, ~600 MB)", systemImage: "xmark.circle").foregroundStyle(.orange)
+        case .missing: Label("Not installed (Python + MLX, ~1.5 GB)", systemImage: "xmark.circle").foregroundStyle(.orange)
         case .installing(let step): Label(step, systemImage: "arrow.down.circle")
         case .ready: Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed(let message): Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red)

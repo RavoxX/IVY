@@ -11,18 +11,14 @@ final class MusicController: ObservableObject {
     @Published private(set) var lastError: String?
 
     let spotify: SpotifyService
-    private var observer: NSObjectProtocol?
     private var liveTimer: Timer?
     private var liveClients = 0
     private var refreshTask: Task<Void, Never>?
 
     init(spotify: SpotifyService) {
         self.spotify = spotify
-        observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil, queue: .main
-        ) { [weak self] notification in
-            let info = notification.userInfo ?? [:]
-            MainActor.assumeIsolated { self?.apply(notificationInfo: info) }
+        spotify.onPlaybackChange = { [weak self] state in
+            Task { @MainActor [weak self] in self?.receive(state) }
         }
         refresh()
     }
@@ -95,23 +91,14 @@ final class MusicController: ObservableObject {
         }
     }
 
-    private func apply(notificationInfo info: [AnyHashable: Any]) {
-        let playerState = (info["Player State"] as? String)?.lowercased() ?? ""
-        let status: PlaybackStatus = playerState == "playing" ? .playing : playerState == "paused" ? .paused : .stopped
-        let trackID = info["Track ID"] as? String
-        let trackChanged = trackID != state?.trackID
-        var next = state ?? MusicState(status: status)
-        next.status = status
-        if let name = info["Name"] as? String { next.title = name }
-        if let artist = info["Artist"] as? String { next.artist = artist }
-        if let album = info["Album"] as? String { next.album = album }
-        if let duration = info["Duration"] as? Double { next.duration = duration / 1000 }
-        if let position = info["Playback Position"] as? Double { next.position = position }
-        next.trackID = trackID
-        next.capturedAt = Date()
-        if trackChanged { next.artworkURL = nil }
+    /// A playback notification from Spotify (already parsed by `SpotifyService`).
+    private func receive(_ notified: MusicState) {
+        var next = notified
+        if let current = state, current.trackID == next.trackID {
+            if next.artworkURL == nil { next.artworkURL = current.artworkURL }
+            next.shuffling = current.shuffling
+            next.repeating = current.repeating
+        }
         state = next
-        // Artwork isn't part of the notification; fetch it once per track change.
-        if trackChanged || next.artworkURL == nil { refresh() }
     }
 }

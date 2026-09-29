@@ -15,6 +15,12 @@ struct SetupView: View {
         [ModelCatalog.defaultLLM, ModelCatalog.defaultWhisper, ModelCatalog.kokoro]
     }
 
+    private var runtimeBytes: Int64 { RuntimeManager.isRuntimeInstalled ? 0 : 1_500_000_000 }
+
+    private var allInstalled: Bool {
+        RuntimeManager.isRuntimeInstalled && requiredModels.allSatisfy { runtime.isInstalled($0) }
+    }
+
     private var totalDownload: Int64 {
         requiredModels.filter { !runtime.isInstalled($0) }.reduce(0) { $0 + $1.approximateBytes }
     }
@@ -52,7 +58,23 @@ struct SetupView: View {
                         detectLine("Claude Code", detected: claude.detected[.claude] != nil,
                                    detail: claude.detected[.claude].map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "Not found")
                     }
-                    step(3, "Local AI runtime") {
+                    step(3, "Install IVY's local AI") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("IVY downloads its AI once and then runs fully offline on your Mac: the MLX runtime (~1.5 GB), Qwen3 4B, Whisper and Kokoro.")
+                                .font(.callout).foregroundStyle(.secondary)
+                            HStack {
+                                Button {
+                                    runtime.installEverything(requiredModels)
+                                } label: {
+                                    Label(allInstalled ? "Everything Is Installed" : "Install Everything (\(ByteCountFormatter.string(fromByteCount: totalDownload + runtimeBytes, countStyle: .file)))",
+                                          systemImage: allInstalled ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                                }
+                                .controlSize(.large)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(allInstalled || runtime.isInstallingEverything)
+                                if runtime.isInstallingEverything { ProgressView().controlSize(.small) }
+                            }
+                        }
                         RuntimeSection(runtime: runtime)
                             .labelsHidden()
                     }

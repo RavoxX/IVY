@@ -184,7 +184,7 @@ struct MusicVolumeTool: IVYTool {
                 arguments: level.map { ["action": "set", "level": .number(Double($0))] } ?? ["action": .string(direction)],
                 context: toolContext)
         }
-        let current = try await context.spotify.state().volume
+        let current = await context.spotify.currentVolume()
         let target: Int
         if let level = arguments.int("level") {
             target = level
