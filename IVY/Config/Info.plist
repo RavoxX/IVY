@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSUIElement</key>
+	<true/>
+	<key>CFBundleDisplayName</key>
+	<string>IVY</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>IVY listens while you hold its shortcut so you can speak questions. Audio is transcribed locally on your Mac and never stored or uploaded.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>IVY reads and creates reminders when you ask about your to-do list.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>IVY reads, creates and completes reminders when you ask about your to-do list. Reminder data stays on your Mac.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>IVY controls Spotify playback (play, pause, skip, volume) when you ask it to.</string>
+</dict>
+</plist>

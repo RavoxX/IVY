@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcresult
+
+# SwiftPM
+.build/
+.swiftpm/
+IVY/IVYKit/.swiftpm/
+Package.resolved
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local models / runtime never belong in git
+*.safetensors
+*.npz
+Models/
