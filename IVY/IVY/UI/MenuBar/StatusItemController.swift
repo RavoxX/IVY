@@ -34,6 +34,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let paused = env.settings.bool(.paused)
         menu.addItem(withTitle: "Open IVY", action: #selector(openIVY), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Assistant Window…", action: #selector(openAssistantWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Writing Assistant (⌃⌥W)", action: #selector(openWritingAssistant), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Dashboard", action: #selector(openDashboard), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "IVY Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
@@ -45,6 +47,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openIVY() { env.notch.enterTextMode() }
+    @objc private func openAssistantWindow() { env.openSettings(section: "assistant") }
+    @objc private func openWritingAssistant() { env.writingAssist.prepare() }
     @objc private func openDashboard() { env.notch.openDashboard() }
     @objc private func openSettings() { env.openSettings() }
     @objc private func openSetup() { showSetup() }

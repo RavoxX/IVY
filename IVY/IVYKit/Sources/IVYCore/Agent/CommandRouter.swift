@@ -33,6 +33,7 @@ public struct CommandRouter: Sendable {
     public func route(_ input: String) -> ToolCall? {
         let text = Self.normalize(input)
         guard !text.isEmpty else { return nil }
+        if ["undo", "undo my last action", "undo last action", "rückgängig", "letzte aktion rückgängig"].contains(text) { return ToolCall(name: ToolName.undoLastAction) }
 
         if let call = routeSettings(text, original: input) { return call }
         // "Remind me … and add it to my calendar too" needs several tools: the model plans those.

@@ -11,9 +11,13 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     private let settings: SettingsStore
     private let governor: EnergyGovernor
     /// Which setting picks the model: the main model, or the optional writing model.
+    private let modelOverride: String?
+    private let usage: @Sendable (AIUsage) async -> Void
     private let modelKey: SettingsKey
 
-    init(settings: SettingsStore, governor: EnergyGovernor, modelKey: SettingsKey = .llmModelID) {
+    init(settings: SettingsStore, governor: EnergyGovernor, modelKey: SettingsKey = .llmModelID, modelOverride: String? = nil, usage: @escaping @Sendable (AIUsage) async -> Void = { _ in }) {
+        self.modelOverride = modelOverride
+        self.usage = usage
         self.settings = settings
         self.governor = governor
         self.modelKey = modelKey
@@ -25,19 +29,19 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     }
 
     var descriptor: ModelDescriptor {
-        ModelCatalog.descriptor(id: settings.string(modelKey)).flatMap { $0.kind == .llm ? $0 : nil }
+        ModelCatalog.descriptor(id: modelOverride ?? settings.string(modelKey)).flatMap { $0.kind == .llm ? $0 : nil }
             ?? ModelCatalog.defaultLLM
     }
 
     /// A custom model path (Settings → AI → Model path) overrides the main catalog model.
     var modelDirectory: URL {
-        let custom = modelKey == .llmModelID ? settings.string(.llmModelPath) : ""
+        let custom = modelOverride == nil && modelKey == .llmModelID ? settings.string(.llmModelPath) : ""
         if !custom.isEmpty { return URL(fileURLWithPath: (custom as NSString).expandingTildeInPath) }
         return descriptor.directory(in: settings.modelsFolder)
     }
 
     var isAvailable: Bool {
-        RuntimeManager.isRuntimeInstalled && ModelFiles.isInstalled(at: modelDirectory, kind: .llm)
+        (modelOverride == nil || ModelCatalog.descriptor(id: modelOverride ?? "")?.kind == .llm) && RuntimeManager.isRuntimeInstalled && ModelFiles.isInstalled(at: modelDirectory, kind: .llm)
     }
 
     var availabilityError: any Error {
@@ -62,6 +66,7 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
     func generate(messages: [ChatMessage], tools: [JSONValue], options: GenerationOptions,
                   onToken: @escaping @Sendable (String) -> Void) async throws -> String {
         try await loadModel()
+        let started = Date()
         let done = try await engine.request("generate", [
             "messages": .array(messages.map(\.jsonValue)),
             "tools": .array(tools),
@@ -79,6 +84,9 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
         let cached = done["cached_tokens"]?.doubleValue ?? 0
         let firstToken = done["first_token_seconds"]?.doubleValue ?? 0
         Log.llm.info("Generated (prompt \(Int(prompt)), cached \(Int(cached)), first token \(firstToken, format: .fixed(precision: 2)) s)")
+        await usage(AIUsage(provider: .local, model: descriptor.id, inputTokens: Int(prompt),
+                            outputTokens: done["generation_tokens"]?.doubleValue.map { Int($0) }, cachedTokens: Int(cached),
+                            seconds: Date().timeIntervalSince(started), succeeded: true))
         return done["text"]?.stringValue ?? ""
     }
 

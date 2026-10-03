@@ -4,7 +4,11 @@
 
 - 🎙️ **Voice or text** — hold <kbd>⌘</kbd><kbd>⌥</kbd> for 0.5 s to talk; release <kbd>⌘</kbd> and press it again to type.
 - 🧠 **Local LLM** — Qwen3-4B (4-bit) via MLX-LM by default, with native tool calling; 1.7B, 8B and 14B are one click away in Settings.
-- ☁️ **Optional cloud AI** — select Gemini, Claude or OpenAI, choose a model and save your own API key in Settings ▸ AI. Keys stay in macOS Keychain.
+- ☁️ **Cloud AI & task models** — stream Gemini, Claude or OpenAI responses; choose separate models for commands, research, writing, grammar, translation and definitions. API keys stay in macOS Keychain.
+- ✍️ **Writing assistant** — select text in an editable field, preview improvements in the notch, then Accept to replace it. Read-only text and password fields are excluded.
+- 🧩 **App connectors** — a categorized gallery with real service logos, connected accounts, MCP registry search, browser OAuth and custom remote servers.
+- 🪟 **Assistant workspace** — full resizable settings, searchable history, New conversation, document and selected-text context, local screenshot OCR, preferences and routines.
+- 📊 **Usage & updates** — token/request counts and an explicit GitHub update button with checksum, signature verification and rollback.
 - 👂 **Local speech-to-text** — MLX Whisper (large-v3-turbo).
 - 🗣️ **Local TTS** — Kokoro-82M via MLX (`mlx-audio`). Off by default.
 - ✅ **Reminders** — read, create and complete Apple Reminders through EventKit.
@@ -67,7 +71,7 @@ IVY works on displays without a notch too — it attaches to the top center of t
 3. In the setup window click **Install Everything**. IVY downloads its local AI once from the web: the MLX runtime (~1.5 GB) and the models (~4.3 GB). The size is shown before anything starts. After that, local AI runs offline. Alternatively, finish setup and select Gemini, Claude or OpenAI in **Settings ▸ AI** with your own API key (text needs no local models).
 4. Hold <kbd>⌘</kbd><kbd>⌥</kbd> and talk.
 
-The DMG itself is small (~3 MB) because models are never bundled into the app.
+The DMG itself is only a few MB because models are never bundled into the app.
 
 ### Building the DMG
 
@@ -155,6 +159,42 @@ Try:
 
 The shortcut, hold time and text-mode window are configurable in **Settings ▸ Shortcuts**.
 
+## Writing assistant
+
+Select text in an **editable text field** in another app. With Accessibility permission, IVY offers rewriting automatically; control this in **Settings ▸ Writing Assistant**. Press **⌃⌥W** or choose **Writing Assistant** in the IVY menu to invoke it manually.
+
+Improve grammar/clarity, Rephrase, Shorten, Professional, Friendly and Translate preview their suggestions inside the notch. Choose the translation language in settings. Selecting text alone makes no model request; choose an action first. **Accept** rechecks the original field, full value and selected range, then verifies the replacement. Changed, disabled, read-only and password fields are rejected. Cancelled or incomplete suggestions cannot be accepted. Apps without compatible Accessibility editing must use Copy instead. **Undo latest action** can restore an unchanged field within the current session.
+
+**AI ▸ Models by task** sets separate models for Grammar & rewriting and Translation. Cloud writing actions send only the selected text and instruction, not the entire field.
+
+## Full workspace and daily workflows
+
+Open **Assistant Window** from the IVY menu, or expand a notch response; a running task continues in the window. New conversation clears the active conversation and structured tool references. History searches the last 50 stored requests and answers.
+
+Add selected/copied text, PDFs, text documents or images and review extracted context before Send. PDFs are capped at 30 pages and each attachment at 12,000 characters. Screenshot capture is interactive and uses local OCR; this version reads image text, not visual layouts. Attach a selected email and ask “Draft a reply”; no message is sent automatically.
+
+Personal preferences and a 1–120 minute conversation lifetime are editable. Recent reminder/event IDs, file paths and source results remain available for follow-ups. Event changes require confirmation. Compound tasks allow up to eight model passes and twelve tools; repeated calls stop before replaying effects. Failed-step retry runs only failures and confirms again. Undo covers new reminders/events/timers, completed reminders, event time changes and compatible writing replacements; it stops if the item changed afterwards.
+
+**Routines** save 1–8 commands and run them in order, pausing at a failed or ambiguous step. High-risk actions still ask for confirmation. **Dashboard** controls widget visibility/order, music and the battery header.
+
+**Benchmark** runs 12 English/German scenarios against the chosen model with synthetic tools. It records expected tool behavior, wrong actions, timing and API usage without real calendar/account changes. Cloud runs are billable, explicit and stoppable. This small diagnostic sample is not a guarantee of task accuracy.
+
+Web research reads up to three source pages, retaining each URL, retrieval time and declared publication date when available. Answers use source-linked citations. Unreadable pages or model failures produce an explicit error instead of presenting a list of search results as an answer.
+
+## Connectors
+
+**App Connectors ▸ Discover** groups featured services by category with real bundled logos. **My apps** manages accounts, status and enabled tools. Search or Browse queries the public MCP registry only when requested. Add custom connector supports HTTPS Streamable HTTP MCP (HTTP only on loopback), JSON and SSE.
+
+Browser sign-in uses OAuth discovery, PKCE, state validation and a local callback. Dynamic registration works when the server supports it; other services need a client ID/secret or bearer token. Grants stay in Keychain, tokens refresh before use, and sessions start disconnected. Tools are disabled until enabled; every remote call shows its arguments for confirmation.
+
+Google Workspace MCP is currently a developer preview requiring project/API enablement and OAuth setup. Other services can require registration or account plans. IVY does not reuse ChatGPT/Claude's private OAuth clients or promise instant access to every listing. Microsoft 365 searches for compatible public servers. See [connector setup instructions](docs/connectors.md).
+
+## Usage and updates
+
+**AI Usage** shows IVY requests, reported input/output/cached tokens, failures and timing by provider/model, JSON export and billing links. Usage records contain no prompts, responses, keys or arguments. They do not show your provider's remaining balance or total bill.
+
+**Updates ▸ Check for updates** reads the latest stable GitHub release. **Update & restart** verifies the compatible DMG's SHA-256, app bundle ID/version and signing team, stages it, and replaces the writable installed app after exit. A startup acknowledgement is required before deleting the backup; installation/startup failure restores the old copy. Move IVY out of its DMG/App Translocation into a writable Applications folder first. Unsigned builds cannot pass verification. Checks/updates are explicit; signing/notarization limitations still apply.
+
 ## Architecture
 
 ```
@@ -205,7 +245,7 @@ typed text ───────────────────────
 - Everything else goes to the **selected AI model**: local Qwen3 uses its native `<tool_call>` format; cloud providers use native API function calls with the same argument validation, confirmation policy and action-claim guard. The request line carries a short **“likely tools” hint** from keywords (mail → `mail_search`), which steers small models without changing the cached tool list. Tool results go back to the model for a one-sentence answer, or are shown directly when the tool's summary already is the answer.
 - **Ambiguity is a question, not a guess**: when several people, reminders or shortcuts match (“Alex” → Alex Kim / Alex Meyer), the tool asks which one, the notch stays open with the text field ready, and your reply continues the conversation.
 - **Actions are verified**: calendar events and reminders are read back after saving, volume/mute and dark mode are re-read, Focus is checked after the shortcut runs (with Full Disk Access), Spotify verifies the song that actually started, and Low Power Mode is re-checked.
-- An optional **writing model** (Settings ▸ AI) writes web answers, clipboard rewrites and dictionary lists, e.g. Qwen3 14B, while the main local model stays small and fast for commands. With cloud AI, the selected cloud model handles both commands and writing. Local clipboard rewrites stream into their card; cloud rewrites appear when the provider response completes.
+- **Models by task** (Settings ▸ AI) can assign different local or cloud models to commands, research, writing, grammar, translation and definitions. The optional local writing model remains available. Writing previews stream as the chosen model responds; tool arguments are validated only after a complete response.
 - The model never gets a shell. Tools take **validated, structured arguments**.
 
 ### The notch animation
@@ -229,7 +269,9 @@ With **Local (MLX)** selected, Settings ▸ AI lets you pick Qwen3 1.7B / 4B / 8
 
 In **Settings ▸ AI**, choose **Google Gemini**, **Anthropic Claude** or **OpenAI**, select a model preset (or enter a custom text model ID with function calling), paste your own API key with **⌘V** or the **Paste** button and click **Save API Key**. Standard editing shortcuts also work in other Settings and notch text fields. Each provider keeps its own model preference and Keychain entry. You can replace or remove a key there. Settings reset restores Local as the provider; saved keys remain in Keychain until you remove them.
 
-The selected provider handles chat, tool planning, web answers, clipboard rewrites and dictionary generation. The optional local writing model applies only to Local (MLX). Cloud AI needs internet access and API access/billing for the chosen model. Invalid credentials, unavailable models, quota errors and incomplete responses are reported; IVY never silently switches providers or falls back to another model. Cloud replies appear when each API response completes; the output budget includes reasoning and tool arguments.
+**Models by task** selects a provider and model independently for commands/planning, research, writing/summaries, grammar/rewriting, translation, and definitions. Inherit uses the main command choice (or the optional writing provider). The existing optional local writing model remains available. Local task models must be downloaded first; cloud tasks use that provider's saved key. The UI labels routing Local, Cloud or Hybrid and explains which requests leave your Mac.
+
+Cloud text streams immediately. Native tool arguments stay buffered until a completed response is validated. IVY reports credential, model, quota and incomplete-response errors; it never silently switches providers. **Test connection** makes a small billable request, and **Refresh model list** retrieves account-accessible IDs. The output budget includes reasoning and tool arguments.
 
 Your request, recent conversation context, tool schemas and tool results are sent directly over HTTPS to the selected provider. Depending on what you ask, this can include clipboard text, mail metadata, reminders, calendar events and file-search results. Microphone audio and TTS remain local. Selecting a provider, saving a key or opening the notch sends no background test/warm-up requests; instant commands that need no model still run locally. Switch back to **Local (MLX)** to keep model processing on your Mac.
 
@@ -247,7 +289,7 @@ The adapters use the [OpenAI Responses API](https://developers.openai.com/api/do
 
 Spotify silently substitutes region-locked tracks, so IVY plays candidates one by one and **verifies the title and artist that actually start**. Only the song name is sent, and the lookup can be disabled. The closed notch shows album art and animated bars while music plays.
 
-**Web search** — `web_search` queries DuckDuckGo's HTML endpoint (Wikipedia as a fallback), reads the top page, and lets the model answer from real text. Sources are shown as a card. **Weather** comes from Open-Meteo. There are no API keys, and only the query is sent. Both can be switched off (Settings ▸ Integrations ▸ Web).
+**Web search** — `web_search` queries DuckDuckGo's HTML endpoint (Wikipedia as a fallback), reads up to three pages concurrently, associates excerpts with URLs and retrieval dates, and asks the research model for a cited answer. Sources are shown as a card. **Weather** comes from Open-Meteo. There are no API keys, and only the query is sent. Both can be switched off (Settings ▸ Integrations ▸ Web).
 
 **Timers** — `TimerService` schedules a single timer for the next deadline (zero idle cost). The closed notch shows the countdown, and a finished timer pops up with a Stop button and a sound.
 
@@ -275,7 +317,7 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 | --- | --- | --- |
 | Low | read reminders/calendar/mail, file search, clipboard, dictionary, battery, now playing, open app/URL, browser/web search, timers, volume, pause, settings | runs immediately |
 | Medium | create/complete reminder, create calendar event, run a shortcut, switch Focus (new shortcuts need your click in Shortcuts), Low Power Mode (macOS asks for your password), start a coding session, dark mode | runs immediately |
-| High | move file to Trash, allowlisted maintenance commands, shortcuts that unlock/open/pay/send | **explicit confirmation card** |
+| High | connector tools, calendar edits, Undo, Trash, maintenance commands, shortcuts that unlock/open/pay/send | **explicit confirmation card** |
 
 - No tool accepts free-form shell, AppleScript or terminal input.
 - Commands come from a fixed allowlist (`CommandAllowlist`); the model can only choose an ID.
@@ -293,7 +335,7 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 | Automation → Mail | “Any new mail?” | For mail |
 | Full Disk Access | Reading the active Focus | Optional |
 | Automation → System Events | Dark mode toggle | For dark mode |
-| Accessibility | — | **Not required** |
+| Accessibility | Selected-text context and editing | For writing assistant / selected-text context; optional otherwise |
 
 IVY is not sandboxed because it launches its local engine, Terminal and Claude Code. It uses the hardened runtime.
 
@@ -303,7 +345,7 @@ IVY is not sandboxed because it launches its local engine, Terminal and Claude C
 - Prompts, transcripts and answers are processed locally by default. With cloud AI selected, requests, recent context and tool results are sent to that provider; audio stays local. There's no analytics or telemetry.
 - History is a small local JSON file (last 50 entries) that you can switch off or clear.
 - Logs use `os.Logger` with prompts marked private. View them with `log stream --predicate 'subsystem == "com.ravoxx.IVY"'`.
-- Network is used for model downloads, explicitly selected cloud AI, the optional song lookup, web search and weather (switchable), and by Spotify/Claude Code themselves.
+- Network is used for model downloads, explicitly selected cloud AI, song lookup, web/weather, user-triggered connectors, explicit update checks/downloads, and Spotify/Claude Code. Service logos are bundled offline.
 
 ## Tests
 
@@ -311,7 +353,7 @@ IVY is not sandboxed because it launches its local engine, Terminal and Claude C
 cd IVY/IVYKit && swift test
 ```
 
-Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
+Also covers SSE event boundaries, partial-tool rejection, editable-field exclusions, Unicode replacement, per-task routing, usage, versions, MCP transport/pagination, schemas and failed-step recovery. Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
 
 ## Known limitations
 

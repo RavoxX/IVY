@@ -7,6 +7,8 @@ enum ApplicationMenu {
     static func install() {
         let main = NSMenu()
         let application = NSMenu(title: "IVY")
+        application.addItem(withTitle: "IVY Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+        application.addItem(.separator())
         application.addItem(withTitle: "Quit IVY", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let applicationItem = main.addItem(withTitle: "IVY", action: nil, keyEquivalent: "")
         applicationItem.submenu = application

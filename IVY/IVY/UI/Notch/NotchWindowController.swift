@@ -125,6 +125,8 @@ final class NotchWindowController {
 
     /// Springs the Core Animation notch shape to the model's current size.
     private func updateShape(animated: Bool) {
+        if model.workspaceVisible { panel.orderOut(nil); return }
+        panel.orderFrontRegardless()
         container.apply(NotchContainerView.Spec(size: model.shapeSize, topRadius: model.topRadius,
                                                 bottomRadius: model.bottomRadius, band: model.geometry.topBandHeight,
                                                 isOpen: model.isOpen),
@@ -150,7 +152,7 @@ final class NotchWindowController {
 
     /// The panel only takes mouse events while the pointer is over the visible shape.
     private func updateMouseHandling(location: CGPoint = NSEvent.mouseLocation) {
-        let inside = model.isOpen && shapeRect.contains(location)
+        let inside = !model.workspaceVisible && model.isOpen && shapeRect.contains(location)
         if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
     }
 

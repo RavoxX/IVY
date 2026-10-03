@@ -5,6 +5,9 @@ import SwiftUI
 
 struct CloudProviderSettings: View {
     let provider: AIProvider
+    var usage: UsageStore? = nil
+    @State private var discovered: [String] = []
+    @State private var testing = false
     @State private var model = ""
     @State private var apiKey = ""
     @State private var keySaved = false
@@ -12,7 +15,7 @@ struct CloudProviderSettings: View {
     @State private var failed = false
 
     private var preset: Binding<String> {
-        Binding(get: { provider.suggestedModels.contains(model) ? model : "custom" }, set: {
+        Binding(get: { (provider.suggestedModels + discovered).contains(model) ? model : "custom" }, set: {
             model = $0 == "custom" ? "" : $0
         })
     }
@@ -20,7 +23,7 @@ struct CloudProviderSettings: View {
     var body: some View {
         Section(provider.displayName) {
             Picker("Model", selection: preset) {
-                ForEach(provider.suggestedModels, id: \.self) { Text($0).tag($0) }
+                ForEach(Array(Set(provider.suggestedModels + discovered)).sorted(), id: \.self) { Text($0).tag($0) }
                 Text("Custom model ID").tag("custom")
             }
             TextField("Model ID", text: $model)
@@ -50,6 +53,12 @@ struct CloudProviderSettings: View {
                 Spacer()
                 Link("Get an API key", destination: provider.apiKeyURL)
             }
+            HStack {
+                Button("Test connection") { testConnection() }.disabled(testing || !keySaved)
+                Button("Refresh model list") { refreshModels() }.disabled(testing || !keySaved)
+                if testing { ProgressView().controlSize(.small) }
+            }
+            Text("Testing sends a small billable request to the selected model. Refresh retrieves model IDs from this API account; some listed models may not support text or tools.").font(.caption).foregroundStyle(.secondary)
             if !message.isEmpty {
                 Text(message).font(.caption).foregroundStyle(failed ? .red : .secondary)
             }
@@ -59,6 +68,29 @@ struct CloudProviderSettings: View {
         .onAppear {
             model = SettingsStore().cloudModel(for: provider)
             keySaved = !(Keychain.read(account: provider.keychainAccount) ?? "").isEmpty
+        }
+    }
+
+    private func testConnection() {
+        testing = true; message = "Testing model access…"; failed = false
+        let configuration = CloudModelConfiguration(provider: provider, model: model, apiKey: Keychain.read(account: provider.keychainAccount) ?? "")
+        Task {
+            defer { testing = false }
+            do {
+                let service = CloudLLMService(configuration: configuration, usage: { [usage] in await usage?.append($0) })
+                _ = try await service.generateResponse(messages: [.user("Reply with OK.")], tools: [], options: .init(maxTokens: 2048)) { _ in }
+                message = "Connected. This account can generate text with \(configuration.model)."
+            } catch { failed = true; message = error.localizedDescription }
+        }
+    }
+    private func refreshModels() {
+        testing = true; failed = false; message = "Loading model IDs…"
+        Task {
+            defer { testing = false }
+            do {
+                discovered = try await CloudModelDiscovery.models(provider: provider, apiKey: Keychain.read(account: provider.keychainAccount) ?? "")
+                message = "Loaded \(discovered.count) model IDs from your account."
+            } catch { failed = true; message = error.localizedDescription }
         }
     }
 

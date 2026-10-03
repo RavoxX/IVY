@@ -139,6 +139,50 @@ final class CalendarService: @unchecked Sendable {
                                  end: event.endDate, isAllDay: allDay, calendar: calendar.title, location: location)
     }
 
+    func event(id: String) async throws -> CalendarEventItem {
+        guard try await ensureAccess(), let event = store.event(withIdentifier: id) else { throw ToolError.failed("That event no longer exists or Calendar access is unavailable.") }
+        return Self.item(event)
+    }
+
+    func update(id: String, start: Date, duration: TimeInterval?) async throws -> (before: CalendarEventItem, after: CalendarEventItem) {
+        guard try await ensureAccess(), let event = store.event(withIdentifier: id) else { throw ToolError.failed("That event no longer exists or Calendar access is unavailable.") }
+        guard event.calendar.allowsContentModifications, event.recurrenceRules?.isEmpty != false else {
+            throw ToolError.unavailable("This event is read-only or repeats. Edit recurring events in Calendar.")
+        }
+        let before = Self.item(event)
+        let seconds = duration ?? event.endDate.timeIntervalSince(event.startDate)
+        event.startDate = start; event.endDate = start.addingTimeInterval(seconds)
+        try store.save(event, span: .thisEvent, commit: true)
+        guard let updated = store.event(withIdentifier: event.eventIdentifier), updated.startDate == start else { throw ToolError.failed("Calendar didn't keep the changed time.") }
+        return (before, Self.item(updated))
+    }
+
+    func restore(_ before: CalendarEventItem, ifUnchanged after: CalendarEventItem) async throws -> String {
+        guard try await ensureAccess(), let event = store.event(withIdentifier: after.id), Self.item(event) == after else {
+            throw ToolError.failed("The event changed after IVY moved it; undo was stopped.")
+        }
+        event.startDate = before.start; event.endDate = before.end
+        try store.save(event, span: .thisEvent, commit: true)
+        return "Restored the previous time for “\(before.title)”."
+    }
+
+    private static func item(_ event: EKEvent) -> CalendarEventItem {
+        CalendarEventItem(id: event.eventIdentifier ?? "", title: event.title ?? "", start: event.startDate,
+            end: event.endDate, isAllDay: event.isAllDay, calendar: event.calendar.title, location: event.location)
+    }
+
+    func undoCreation(_ original: CalendarEventItem) async throws -> String {
+        guard try await ensureAccess(), let event = store.event(withIdentifier: original.id),
+              event.title == original.title, event.startDate == original.start, event.endDate == original.end,
+              event.location == original.location, event.isAllDay == original.isAllDay,
+              event.calendar.title == original.calendar, event.recurrenceRules?.isEmpty != false else {
+            throw ToolError.failed("The event was changed or removed since IVY created it; undo was stopped.")
+        }
+        try store.remove(event, span: .thisEvent, commit: true)
+        guard store.event(withIdentifier: original.id) == nil else { throw ToolError.failed("The event couldn't be removed.") }
+        return "Removed the calendar event IVY created: \(original.title)."
+    }
+
     func events(scope: String, now: Date = Date()) async throws -> [CalendarEventItem] {
         guard try await ensureAccess() else { throw ToolError.permissionDenied("Calendar") }
         let calendar = Calendar.current

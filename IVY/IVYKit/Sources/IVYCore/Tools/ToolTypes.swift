@@ -145,6 +145,7 @@ public protocol IVYTool: Sendable {
     var name: String { get }
     var description: String { get }
     var parameters: [ToolParameter] { get }
+    var schema: JSONValue { get }
     /// Human readable label shown while the tool runs ("Spotify", "Reminders", …).
     var displayName: String { get }
     var baseRisk: RiskLevel { get }
@@ -213,7 +214,8 @@ public extension Dictionary where Key == String, Value == JSONValue {
     }
 
     func int(_ key: String) -> Int? {
-        self[key]?.doubleValue.map { Int($0.rounded()) }
+        guard let value = self[key]?.doubleValue, value.isFinite else { return nil }
+        return Int(exactly: value.rounded())
     }
 
     func bool(_ key: String) -> Bool? {

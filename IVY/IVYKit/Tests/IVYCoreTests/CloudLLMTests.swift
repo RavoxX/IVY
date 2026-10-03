@@ -63,7 +63,10 @@ struct CloudLLMTests {
             case .gemini:
                 #expect(request.url?.host == "generativelanguage.googleapis.com")
                 #expect(request.value(forHTTPHeaderField: "x-goog-api-key") == "test-secret")
-                #expect(value["tools"]?.arrayValue?.first?["functionDeclarations"]?.arrayValue?.first == schema["function"])
+                let function = value["tools"]?.arrayValue?.first?["functionDeclarations"]?.arrayValue?.first
+                #expect(function?["name"] == "lookup")
+                #expect(function?["parametersJsonSchema"] == schema["function"]?["parameters"])
+                #expect(function?["parameters"] == nil)
             case .local: break
             }
         }

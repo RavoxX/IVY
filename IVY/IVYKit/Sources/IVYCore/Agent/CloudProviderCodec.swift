@@ -109,7 +109,11 @@ enum CloudProviderCodec {
             body = ["systemInstruction": ["parts": [["text": .string(system)]]], "contents": .array(turns),
                     "generationConfig": ["maxOutputTokens": .number(Double(maxTokens))]]
             if !functions.isEmpty {
-                body["tools"] = [["functionDeclarations": .array(functions.map(JSONValue.object))]]
+                body["tools"] = [["functionDeclarations": .array(functions.map { function in
+                    var declaration = function
+                    declaration["parametersJsonSchema"] = declaration.removeValue(forKey: "parameters")
+                    return .object(declaration)
+                })]]
             }
         case .local: throw CloudModelError.invalidModel
         }

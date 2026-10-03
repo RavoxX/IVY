@@ -68,13 +68,17 @@ struct WebSearchTool: IVYTool {
         }
         let query = try arguments.requiredString("query")
         let result = try await WebSearchService().search(query)
+        guard let excerpt = result.excerpt else {
+            return ToolResult(status: .failure, summary: "I found search links but couldn't read their pages, so I can't give a source-grounded answer. Try a more specific search or open a source below.",
+                              card: .sources(query: query, items: result.links), historyTitle: "Web Search")
+        }
         var data: [String: JSONValue] = [
             "results": .array(result.links.map { link in
                 ["title": .string(link.title), "snippet": .string(String(link.snippet.prefix(300))),
-                 "source": .string(link.url.host ?? "")]
+                 "source": .string(link.url.host ?? ""), "url": .string(link.url.absoluteString)]
             }),
         ]
-        if let excerpt = result.excerpt { data["top_page_excerpt"] = .string(excerpt) }
+        data["page_excerpts"] = .string(excerpt)
         return ToolResult(summary: "Found \(result.links.count) web results for “\(query)”.", data: .object(data),
                           card: .sources(query: query, items: result.links), historyTitle: "Web Search")
     }
@@ -84,6 +88,7 @@ struct WebSearchTool: IVYTool {
 
 struct TimerSetTool: IVYTool {
     let timers: TimerService
+    var undo: UndoStore? = nil
     let name = ToolName.timerSet
     let description = "Start a countdown timer (duration) or set an alarm (clock time). Shown on the notch."
     let displayName = "Timer"
@@ -102,6 +107,11 @@ struct TimerSetTool: IVYTool {
             guard seconds >= 1, seconds <= 24 * 3600 else { throw ToolError.invalidArgument("duration", "must be under 24 hours") }
             let timer = await timers.start(duration: seconds, label: label)
             let name = label.map { " \($0)" } ?? ""
+            if let undo { await undo.add(label: "Cancel timer: " + timer.title) {
+                let exists = await MainActor.run { timers.timers.contains { $0.id == timer.id } }
+                guard exists else { throw ToolError.failed("That timer has already finished or was cancelled.") }
+                await timers.cancel(id: timer.id); return "Cancelled the timer IVY created."
+            } }
             return ToolResult(summary: "\(DurationParser.describe(seconds).capitalizedFirst)\(name) timer started.",
                               card: .timers([timer]), historyTitle: "Timer")
         }
@@ -112,6 +122,11 @@ struct TimerSetTool: IVYTool {
             let timer = await timers.alarm(at: parsed.date, label: label)
             let time = parsed.date.formatted(date: .omitted, time: .shortened)
             let day = Calendar.current.isDateInToday(parsed.date) ? "" : Calendar.current.isDateInTomorrow(parsed.date) ? " tomorrow" : ""
+            if let undo { await undo.add(label: "Cancel alarm: " + timer.title) {
+                let exists = await MainActor.run { timers.timers.contains { $0.id == timer.id } }
+                guard exists else { throw ToolError.failed("That alarm has already finished or was cancelled.") }
+                await timers.cancel(id: timer.id); return "Cancelled the alarm IVY created."
+            } }
             return ToolResult(summary: "Alarm set for \(time)\(day).", card: .timers([timer]), historyTitle: "Alarm")
         }
         throw ToolError.missingArgument("duration")
@@ -204,6 +219,10 @@ struct CalendarTool: IVYTool {
         }.joined(separator: ", ")
         let noun = events.count == 1 ? "event" : "events"
         return ToolResult(summary: "You have \(ReminderTransforms.countWord(events.count)) \(noun) \(when): \(list).",
+                          data: ["events": .array(events.prefix(20).map { event in
+                              ["id": .string(event.id), "title": .string(event.title), "start": .string(event.start.formatted(.iso8601)),
+                               "end": .string(event.end.formatted(.iso8601)), "all_day": .bool(event.isAllDay)]
+                          })],
                           card: .events(title: scope == "week" ? "This Week" : scope.capitalized, items: events),
                           historyTitle: "Calendar")
     }

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AIProvider: String, CaseIterable, Identifiable, Sendable {
+public enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
     case local, gemini, claude, openAI
     public var id: String { rawValue }
 

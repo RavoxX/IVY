@@ -7,10 +7,17 @@ import IVYCore
 final class AppEnvironment {
     let settings = SettingsStore()
     let permissions = PermissionService()
+    let usage = UsageStore(fileURL: AppPaths.applicationSupport.appendingPathComponent("usage.json"))
+    let routines = RoutineStore(fileURL: AppPaths.applicationSupport.appendingPathComponent("routines.json"))
+    let updater = AppUpdater()
+    let undo = UndoStore()
+    let connectors: ConnectorManager
     let history = HistoryStore(fileURL: AppPaths.historyFile)
     let runtime: RuntimeManager
     let llm: MLXLLMService
     let languageModel: ConfiguredLLMService
+    let taskModels: TaskLocalModelPool
+    let writingAssist: WritingAssistService
     /// Optional second model for writing answers (web search, clipboard); see Settings ▸ AI.
     let writerLLM: MLXLLMService
     let phrases = PhraseMemory(fileURL: AppPaths.applicationSupport.appendingPathComponent("learned-phrases.json"))
@@ -39,19 +46,24 @@ final class AppEnvironment {
     private(set) var notch: NotchViewModel!
 
     weak var shortcuts: GlobalShortcutManager?
+    var workspaceDraft = ""
+    var workspaceAttachments: [URL] = []
+    var selectionApplication: NSRunningApplication?
     var settingsPresenter: ((String?) -> Void)?
 
     init() {
+        connectors = ConnectorManager(registry: registry)
         runtime = RuntimeManager(settings: settings)
-        llm = MLXLLMService(settings: settings, governor: governor)
-        writerLLM = MLXLLMService(settings: settings, governor: governor, modelKey: .writingModelID)
-        languageModel = ConfiguredLLMService(local: llm, settings: settings) { provider in
+        llm = MLXLLMService(settings: settings, governor: governor, usage: { [usage] in await usage.append($0) })
+        writerLLM = MLXLLMService(settings: settings, governor: governor, modelKey: .writingModelID, usage: { [usage] in await usage.append($0) })
+        taskModels = TaskLocalModelPool(settings: settings, governor: governor, usage: usage)
+        languageModel = ConfiguredLLMService(local: llm, settings: settings, localModel: { [taskModels] in taskModels.model($0) }, usage: { [usage] in await usage.append($0) }) { provider in
             Keychain.read(account: provider.keychainAccount) ?? ""
         }
         whisper = LocalWhisperService(settings: settings, governor: governor)
         tts = KokoroMLXTTSService(settings: settings, governor: governor)
-        let activeWriter = Self.activeWriter(settings: settings, writer: writerLLM)
-        textService = LLMTextService(main: languageModel, writer: activeWriter, settings: settings)
+        textService = LLMTextService(main: languageModel, settings: settings)
+        writingAssist = WritingAssistService(textService: textService, settings: settings, undo: undo)
         nudges = NudgeService(settings: settings, calendar: calendar, energy: energy, focus: focus)
         glance = GlanceService(settings: settings, reminders: reminders, calendar: calendar, mail: mail,
                                focus: focus, energy: energy)
@@ -69,22 +81,35 @@ final class AppEnvironment {
             options: { settings.generationOptions },
             fastRoutingEnabled: { settings.bool(.fastCommandRouting) },
             situation: {
-                guard settings.bool(.focusAwareReplies), let name = focus.activeName else { return nil }
-                return FocusParser.replyGuidance(for: name)
+                var guidance = String(settings.string(.assistantPreferences).prefix(2000))
+                if settings.bool(.focusAwareReplies), let name = focus.activeName { guidance += " " + FocusParser.replyGuidance(for: name) }
+                return guidance.isEmpty ? nil : guidance
             },
-            writer: activeWriter,
+            writer: { [languageModel] in languageModel.forTask(.research) },
+            writerOptions: {
+                var options = settings.generationOptions
+                if settings.modelChoice(for: .research).provider != .local {
+                    options.contextLength = 128_000
+                    options.maxTokens = max(2048, settings.int(.cloudMaxResponseTokens))
+                }
+                return options
+            },
             phrases: phrases,
             confirm: { [weak self] request in
                 guard let self else { return false }
                 return await self.notch.requestConfirmation(request)
             })
         notch = NotchViewModel(env: self)
+        writingAssist.onPresent = { [weak self] in self?.notch.presentWritingAssist() }
+        writingAssist.canPresentAutomatically = { [weak self] in self?.notch.isBusy == false && self?.notch.workspaceVisible == false }
+        Task { await agent.setConversationLifetime(minutes: settings.int(.conversationMinutes)) }
 
-        runtime.unloadBeforeDelete = { [llm, writerLLM, whisper, tts] kind in
+        runtime.unloadBeforeDelete = { [llm, writerLLM, taskModels, whisper, tts] kind in
             switch kind {
             case .llm:
                 await llm.unloadModel()
                 await writerLLM.unloadModel()
+                await taskModels.unload()
             case .whisper: await whisper.unload()
             case .kokoro: await tts.unload()
             }
@@ -99,16 +124,6 @@ final class AppEnvironment {
         nudges.start()
     }
 
-    /// The writing model, when one is chosen, differs from the main model and is downloaded.
-    static func activeWriter(settings: SettingsStore, writer: MLXLLMService) -> @Sendable () -> (any LocalLLMService)? {
-        {
-            let id = settings.string(.writingModelID)
-            guard settings.aiProvider == .local, !id.isEmpty, id != settings.string(.llmModelID) || !settings.string(.llmModelPath).isEmpty,
-                  writer.isAvailable else { return nil }
-            return writer
-        }
-    }
-
     /// Hot, Low Power Mode or low battery: unload idle models sooner (or now, if critical).
     func applyEnergyPolicy(_ policy: EnergyAdvisor.ModelPolicy) {
         let enabled = settings.bool(.energyAwareModels)
@@ -118,15 +133,17 @@ final class AppEnvironment {
         case .unloadNow: governor.setCap(minutes: 1)
         }
         let busy = notch?.isBusy ?? false
-        Task { [llm, writerLLM, whisper, tts] in
+        Task { [llm, writerLLM, taskModels, whisper, tts] in
             if enabled, policy == .unloadNow, !busy {
                 await llm.unloadModel()
                 await writerLLM.unloadModel()
+                await taskModels.unload()
                 await whisper.unload()
                 await tts.unload()
             } else {
                 await llm.applyIdleTimeout()
                 await writerLLM.applyIdleTimeout()
+                await taskModels.applyIdleTimeout()
                 await whisper.applyIdleTimeout()
                 await tts.applyIdleTimeout()
             }
@@ -136,9 +153,10 @@ final class AppEnvironment {
     private func registerTools() {
         let musicContext = MusicToolContext(spotify: spotify, controller: music, settings: settings)
         let tools: [any IVYTool] = [
+            UndoLastActionTool(store: undo),
             RemindersListTool(service: reminders),
-            RemindersCreateTool(service: reminders),
-            RemindersCompleteTool(service: reminders),
+            RemindersCreateTool(service: reminders, undo: undo),
+            RemindersCompleteTool(service: reminders, undo: undo),
             RemindersSearchTool(service: reminders),
             MusicPlayTool(context: musicContext),
             MusicControlTool(context: musicContext),
@@ -148,7 +166,7 @@ final class AppEnvironment {
             OpenURLTool(launcher: appLauncher),
             BrowserSearchTool(launcher: appLauncher),
             WebSearchTool(settings: settings),
-            TimerSetTool(timers: timers),
+            TimerSetTool(timers: timers, undo: undo),
             TimerListTool(timers: timers),
             TimerCancelTool(timers: timers),
             WeatherTool(settings: settings),
@@ -169,7 +187,8 @@ final class AppEnvironment {
             ClipboardTool(text: textService),
             DictionaryTool(text: textService),
             MailSearchTool(service: mail),
-            CalendarCreateTool(service: calendar),
+            CalendarCreateTool(service: calendar, undo: undo),
+            CalendarUpdateTool(service: calendar, undo: undo),
             ShortcutRunTool(service: shortcutsService),
             FocusTool(focus: focus, shortcuts: shortcutsService),
             LowPowerModeTool(),

@@ -67,13 +67,14 @@ struct ClipboardTool: IVYTool {
         if let exact = ClipboardTransforms.deterministic(action, text: input) {
             output = exact
         } else if action.usesModel {
-            guard text.isAvailable else {
+            guard text.isAvailable(for: action == .translate ? .translation : action == .fixGrammar ? .grammar : .writing) else {
                 return .failure("Configure an AI model in Settings ▸ AI before rewriting the clipboard.")
             }
             // Stream the result into a card while the model writes it.
             let title = action.title
             let reply = try await text.complete(system: ClipboardTransforms.systemPrompt,
                                                 user: ClipboardTransforms.userPrompt(action: action, detail: detail, text: input),
+                                                task: action == .translate ? .translation : action == .fixGrammar ? .grammar : .writing,
                                                 maxTokens: action == .summarize || action == .shorten ? 400 : 1200) { partial in
                 context.preview(.text(title: title, body: ClipboardTransforms.cleanModelOutput(partial)))
             }
@@ -128,16 +129,16 @@ struct DictionaryTool: IVYTool {
 
         switch mode {
         case .define:
-            if result.definition == nil, text.isAvailable {
+            if result.definition == nil, text.isAvailable(for: .definitions) {
                 let reply = try await text.complete(system: WordLookup.definitionSystemPrompt,
-                                                    user: "Define \"\(word)\".", maxTokens: 80)
+                                                    user: "Define \"\(word)\".", task: .definitions, maxTokens: 80)
                 result.definition = reply.nilIfBlank.map { WordLookup.cleanDefinition($0) }
                 result.fromSystemDictionary = false
             }
         case .synonyms, .antonyms:
-            guard text.isAvailable else { return .failure("Configure an AI model in Settings ▸ AI before listing \(mode.rawValue).") }
+            guard text.isAvailable(for: .definitions) else { return .failure("Configure an AI model in Settings ▸ AI before listing \(mode.rawValue).") }
             let reply = try await text.complete(system: WordLookup.listSystemPrompt,
-                                                user: WordLookup.listPrompt(mode: mode, word: word), maxTokens: 80)
+                                                user: WordLookup.listPrompt(mode: mode, word: word), task: .definitions, maxTokens: 80)
             let list = WordLookup.parseList(reply, excluding: word)
             if mode == .synonyms { result.synonyms = list } else { result.antonyms = list }
         }
@@ -198,6 +199,7 @@ struct MailSearchTool: IVYTool {
 
 struct CalendarCreateTool: IVYTool {
     let service: CalendarService
+    var undo: UndoStore? = nil
     let name = ToolName.calendarCreate
     let description = "Add an event to the user's calendar."
     let displayName = "Calendar"
@@ -222,8 +224,10 @@ struct CalendarCreateTool: IVYTool {
         let end = duration.map { start.date.addingTimeInterval(min($0, 24 * 3600)) }
         let event = try await service.create(title: title, start: start.date, end: start.hasTime ? end : nil,
                                              allDay: !start.hasTime, location: arguments.string("location"))
+        if let undo { await undo.add(label: "Remove event: " + event.title) { try await service.undoCreation(event) } }
         let when = RemindersCreateTool.describe(event.start, hasTime: !event.isAllDay)
         return ToolResult(summary: "Added “\(event.title)” to your calendar \(when).",
+                          data: ["event": ["id": .string(event.id), "title": .string(event.title), "start": .string(event.start.ISO8601Format()), "end": .string(event.end.ISO8601Format())]],
                           card: .events(title: "New Event", items: [event]), historyTitle: "New Event")
     }
 }
@@ -426,5 +430,52 @@ struct EnergyTool: IVYTool {
         snapshot.modelLoaded = await llm.isLoaded
         snapshot.modelName = llm.descriptor.displayName
         return ToolResult(summary: EnergyAdvisor.summary(for: snapshot), card: .energy(snapshot), historyTitle: "Battery & Energy")
+    }
+}
+
+// MARK: - Editing an observed event
+
+struct CalendarUpdateTool: IVYTool {
+    let service: CalendarService
+    let undo: UndoStore
+    let name = ToolName.calendarUpdate
+    let description = "Move a previously found calendar event by its exact ID. Preserve its time when only a day is given. Use offset for 'an hour later'."
+    let displayName = "Move Calendar Event"
+    let baseRisk = RiskLevel.high
+    var parameters: [ToolParameter] {
+        [ToolParameter("id", .string, "Exact ID from calendar_events or calendar_create.", required: true),
+         ToolParameter("start", .string, "New day or time in the user's words, or ISO-8601."),
+         ToolParameter("offset_minutes", .integer, "Shift the existing event by this many minutes. Negative moves it earlier."),
+         ToolParameter("duration", .string, "Optional new duration, e.g. 'one hour'.")]
+    }
+    func confirmationPrompt(for arguments: [String: JSONValue]) -> String {
+        "Change this calendar event's time?\n" + JSONValue.object(arguments).jsonString()
+    }
+    func execute(arguments: [String: JSONValue], context: ToolContext) async throws -> ToolResult {
+        let id = try arguments.requiredString("id")
+        guard id.count <= 500 else { throw ToolError.invalidArgument("id", "invalid event identifier") }
+        let existing = try await service.event(id: id)
+        var start = existing.start
+        if let raw = arguments.string("start") {
+            guard let parsed = NaturalDateParser.parse(raw, now: context.now) else { throw ToolError.invalidArgument("start", "unrecognized date") }
+            start = parsed.date
+            if !parsed.hasTime && !existing.isAllDay {
+                let time = Calendar.current.dateComponents([.hour, .minute, .second], from: existing.start)
+                guard let combined = Calendar.current.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0, of: start) else { throw ToolError.invalidArgument("start", "invalid time") }
+                start = combined
+            }
+        } else if let offset = arguments.int("offset_minutes"), (-10_080...10_080).contains(offset), offset != 0 {
+            start = start.addingTimeInterval(Double(offset) * 60)
+        } else { throw ToolError.invalidArgument("start", "provide a new time or an offset") }
+        let duration: TimeInterval?
+        if let raw = arguments.string("duration") {
+            guard let seconds = DurationParser.seconds(in: raw), seconds > 0, seconds <= 86400 else { throw ToolError.invalidArgument("duration", "use a duration up to one day") }
+            duration = seconds
+        } else { duration = nil }
+        let changed = try await service.update(id: id, start: start, duration: duration)
+        await undo.add(label: "Restore event time: " + changed.before.title) { try await service.restore(changed.before, ifUnchanged: changed.after) }
+        return ToolResult(summary: "Moved “\(changed.after.title)” to \(changed.after.start.formatted(date: .abbreviated, time: .shortened)).",
+            data: ["event": ["id": .string(changed.after.id), "title": .string(changed.after.title), "start": .string(changed.after.start.formatted(.iso8601)), "end": .string(changed.after.end.formatted(.iso8601))]],
+            card: .events(title: "Updated Event", items: [changed.after]), historyTitle: "Updated Event")
     }
 }

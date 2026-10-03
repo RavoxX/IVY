@@ -99,8 +99,9 @@ struct AgentServiceTests {
         #expect(result.outcome?.text == "- OpenWeather: free weather data\n- NewsAPI: headlines")
         #expect(result.outcome?.cards.count == 1)
         let messages = try #require(llm.received.first)
-        #expect(messages.last?.role == .tool)
-        #expect(messages.dropLast().last?.toolCalls.first?.name == ToolName.webSearch)
+        #expect(messages.last?.role == .user)
+        #expect(messages.last?.content.contains("Found 5 web results.") == true)
+        #expect(messages.allSatisfy { $0.toolCalls.isEmpty })
     }
 
     @Test("Chained requests keep going until every part has a tool, then report all results")
@@ -115,7 +116,7 @@ struct AgentServiceTests {
         let result = await collect(agent.run("Remind me tomorrow at 9 to call Alex, and set it up in Calendar too"))
         #expect(reminder.calls.count == 1)
         #expect(event.calls.count == 1)
-        #expect(llm.received.count == 2)
+        #expect(llm.received.count == 3)
         #expect(result.outcome?.text == "Reminder set: Call Alex for tomorrow at 9:00. Added “Call Alex” to your calendar tomorrow at 9:00.")
         #expect(result.outcome?.cards.count == 2)
     }
@@ -245,7 +246,7 @@ struct AgentServiceTests {
         let agent = AgentService(llm: llm, registry: ToolRegistry(), router: noApps,
                                  fastRoutingEnabled: { false }, confirm: { _ in true })
         let result = await collect(agent.run("format my disk"))
-        #expect(result.outcome?.text == "I can't do that.")
+        #expect(result.outcome?.text == "There is no tool called format_disk.")
     }
 
     @Test("Registry normalizes tool names emitted by the model")

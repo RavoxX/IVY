@@ -17,7 +17,7 @@ struct RemindersListTool: IVYTool {
         let scope = arguments.string("scope").flatMap { ReminderScope(rawValue: $0.lowercased()) } ?? .today
         let (items, overdue) = try await service.reminders(scope: scope, now: context.now)
         let summary = ReminderTransforms.summary(for: items, scope: scope, overdueCount: overdue)
-        let lines = items.prefix(15).map { JSONValue.string(ReminderTransforms.line(for: $0)) }
+        let lines = items.prefix(15).map { JSONValue.object(["id": .string($0.id), "title": .string($0.title), "description": .string(ReminderTransforms.line(for: $0))]) }
         return ToolResult(summary: summary,
                           data: ["reminders": .array(Array(lines)), "overdue_count": .number(Double(overdue))],
                           card: items.isEmpty ? nil : .reminders(title: scope.title, items: items),
@@ -27,6 +27,7 @@ struct RemindersListTool: IVYTool {
 
 struct RemindersCreateTool: IVYTool {
     let service: ReminderService
+    var undo: UndoStore? = nil
     let name = ToolName.remindersCreate
     let description = "Create a new reminder in Apple Reminders."
     let displayName = "Reminders"
@@ -50,8 +51,10 @@ struct RemindersCreateTool: IVYTool {
         }
         let item = try await service.create(title: title, due: due, notes: arguments.string("notes"),
                                             listName: arguments.string("list"))
+        if let undo { await undo.add(label: "Remove reminder: " + item.title) { try await service.undoCreation(item) } }
         let when = item.dueDate.map { " for \(Self.describe($0, hasTime: item.hasDueTime))" } ?? ""
         return ToolResult(summary: "Reminder set: \(item.title)\(when).",
+                          data: ["reminder": ["id": .string(item.id), "title": .string(item.title), "due": item.dueDate.map { .string($0.ISO8601Format()) } ?? .null]],
                           card: .reminders(title: "New Reminder", items: [item]),
                           historyTitle: "New Reminder")
     }
@@ -69,6 +72,7 @@ struct RemindersCreateTool: IVYTool {
 
 struct RemindersCompleteTool: IVYTool {
     let service: ReminderService
+    var undo: UndoStore? = nil
     let name = ToolName.remindersComplete
     let description = "Mark an existing reminder as completed."
     let displayName = "Reminders"
@@ -88,6 +92,7 @@ struct RemindersCompleteTool: IVYTool {
             return .failure("I couldn't find an open reminder matching “\(query)”.")
         }
         let completed = try await service.complete(id: match.id)
+        if let undo { await undo.add(label: "Reopen reminder: " + completed.title) { try await service.undoCompletion(completed) } }
         return ToolResult(summary: "Marked “\(completed.title)” as done.", historyTitle: "Completed Reminder")
     }
 }
@@ -109,7 +114,7 @@ struct RemindersSearchTool: IVYTool {
         let summary = items.isEmpty ? "No reminders match “\(query)”."
             : "Found \(ReminderTransforms.countWord(items.count)) \(items.count == 1 ? "reminder" : "reminders")."
         return ToolResult(summary: summary,
-                          data: ["reminders": .array(items.prefix(15).map { .string(ReminderTransforms.line(for: $0)) })],
+                          data: ["reminders": .array(items.prefix(15).map { .object(["id": .string($0.id), "title": .string($0.title), "description": .string(ReminderTransforms.line(for: $0))]) })],
                           card: items.isEmpty ? nil : .reminders(title: "Search Results", items: items),
                           historyTitle: "Reminder Search")
     }

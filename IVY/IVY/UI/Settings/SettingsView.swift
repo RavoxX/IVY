@@ -6,11 +6,20 @@ import OSLog
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, ai, voice, shortcuts, integrations, privacy, advanced
+    case assistant, general, dashboard, ai, writing, benchmark, usage, connectors, routines, history, voice, shortcuts, integrations, privacy, updates, advanced
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .writing: return "Writing Assistant"
+        case .benchmark: return "Benchmark"
+        case .assistant: return "Assistant"
+        case .dashboard: return "Dashboard"
+        case .usage: return "AI Usage"
+        case .connectors: return "App Connectors"
+        case .routines: return "Routines"
+        case .history: return "History"
+        case .updates: return "Updates"
         case .general: return "General"
         case .ai: return "AI"
         case .voice: return "Voice"
@@ -23,6 +32,15 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .writing: return "pencil.line"
+        case .benchmark: return "checkmark.seal"
+        case .assistant: return "bubble.left.and.bubble.right"
+        case .dashboard: return "rectangle.3.group"
+        case .usage: return "chart.bar"
+        case .connectors: return "point.3.connected.trianglepath.dotted"
+        case .routines: return "bolt.circle"
+        case .history: return "clock.arrow.circlepath"
+        case .updates: return "arrow.down.circle"
         case .general: return "gearshape"
         case .ai: return "cpu"
         case .voice: return "waveform"
@@ -42,27 +60,69 @@ final class SettingsNavigation: ObservableObject {
 struct SettingsView: View {
     let env: AppEnvironment
     @ObservedObject var navigation: SettingsNavigation
+    @AppStorage(SettingsKey.aiProvider.rawValue) private var activeProvider = AIProvider.local.rawValue
+    @AppStorage(SettingsKey.taskModels.rawValue) private var taskModels = "{}"
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        TabView(selection: $navigation.section) {
-            GeneralSettings(env: env).tabItem { Label("General", systemImage: SettingsSection.general.symbol) }
-                .tag(SettingsSection.general)
-            AISettings(env: env, runtime: env.runtime).tabItem { Label("AI", systemImage: SettingsSection.ai.symbol) }
-                .tag(SettingsSection.ai)
-            VoiceSettings(env: env, runtime: env.runtime).tabItem { Label("Voice", systemImage: SettingsSection.voice.symbol) }
-                .tag(SettingsSection.voice)
-            ShortcutSettings(env: env).tabItem { Label("Shortcuts", systemImage: SettingsSection.shortcuts.symbol) }
-                .tag(SettingsSection.shortcuts)
-            IntegrationSettings(env: env, permissions: env.permissions, claude: env.claudeCode)
-                .tabItem { Label("Integrations", systemImage: SettingsSection.integrations.symbol) }
-                .tag(SettingsSection.integrations)
-            PrivacySettings(env: env, permissions: env.permissions)
-                .tabItem { Label("Privacy", systemImage: SettingsSection.privacy.symbol) }
-                .tag(SettingsSection.privacy)
-            AdvancedSettings(env: env).tabItem { Label("Advanced", systemImage: SettingsSection.advanced.symbol) }
-                .tag(SettingsSection.advanced)
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: Binding<SettingsSection?>(
+                get: { navigation.section }, set: { if let value = $0 { navigation.section = value } })) { section in
+                Label(section.title, systemImage: section.symbol).tag(section)
+                    .padding(.vertical, 5)
+            }
+            .scrollContentBackground(.hidden)
+            .background(SettingsPalette.sidebar(scheme))
+            .navigationTitle("IVY")
+            .navigationSplitViewColumnWidth(min: 185, ideal: 210, max: 260)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("IVY \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(.caption.bold())
+                Text("Your Mac. Your assistant.").font(.caption).foregroundStyle(.secondary)
+            }.padding().frame(maxWidth: .infinity, alignment: .leading)
+                .background(SettingsPalette.sidebar(scheme))
+        } detail: {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Label(navigation.section.title, systemImage: navigation.section.symbol)
+                        .font(.title2.bold())
+                    Spacer()
+                    Text(commandProvider.displayName).font(.caption).foregroundStyle(.secondary)
+                }.padding(24)
+                Divider()
+                detail
+                    .scrollContentBackground(.hidden)
+            }
+            .background(SettingsPalette.window(scheme))
         }
-        .frame(width: 620, height: 560)
+        .tint(.blue)
+        .background(SettingsPalette.window(scheme))
+        .frame(minWidth: 820, idealWidth: 1000, minHeight: 620, idealHeight: 740)
+    }
+
+    private var commandProvider: AIProvider {
+        _ = activeProvider; _ = taskModels
+        return env.settings.modelChoice(for: .commands).provider
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch navigation.section {
+        case .assistant: AssistantWorkspace(env: env, model: env.notch)
+        case .general: GeneralSettings(env: env)
+        case .dashboard: DashboardSettings(env: env)
+        case .ai: AISettings(env: env, runtime: env.runtime)
+        case .writing: WritingAssistSettings(env: env)
+        case .benchmark: BenchmarkSettings(env: env)
+        case .usage: UsageSettings(store: env.usage)
+        case .connectors: ConnectorSettings(manager: env.connectors)
+        case .routines: RoutineSettings(env: env)
+        case .history: HistorySettings(env: env, model: env.notch)
+        case .voice: VoiceSettings(env: env, runtime: env.runtime)
+        case .shortcuts: ShortcutSettings(env: env)
+        case .integrations: IntegrationSettings(env: env, permissions: env.permissions, claude: env.claudeCode)
+        case .privacy: PrivacySettings(env: env, permissions: env.permissions)
+        case .updates: UpdateSettings(updater: env.updater)
+        case .advanced: AdvancedSettings(env: env)
+        }
     }
 }
 
@@ -130,6 +190,7 @@ struct AISettings: View {
     @AppStorage(SettingsKey.cloudMaxResponseTokens.rawValue) private var cloudMaxTokens = 2048
     @AppStorage(SettingsKey.aiProvider.rawValue) private var providerID = AIProvider.local.rawValue
     @AppStorage(SettingsKey.writingModelID.rawValue) private var writingModelID = ""
+    @AppStorage(SettingsKey.writingProvider.rawValue) private var writingProvider = "same"
     @AppStorage(SettingsKey.contextLength.rawValue) private var contextLength = 8192
     @AppStorage(SettingsKey.temperature.rawValue) private var temperature = 0.3
     @AppStorage(SettingsKey.maxResponseTokens.rawValue) private var maxTokens = 320
@@ -140,6 +201,7 @@ struct AISettings: View {
 
     var body: some View {
         Form {
+            TaskModelSettings(env: env)
             Section("AI provider") {
                 Picker("Use", selection: $providerID) {
                     ForEach(AIProvider.allCases) { Text($0.displayName).tag($0.rawValue) }
@@ -154,8 +216,8 @@ struct AISettings: View {
                 Text("Local runs on your Mac. Cloud sends your requests, recent conversation and tool results (including requested clipboard, mail or calendar data) to the selected provider. API usage is billed to your account. Speech recognition and TTS stay local.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if let provider = AIProvider(rawValue: providerID), provider != .local {
-                CloudProviderSettings(provider: provider).id(provider)
+            ForEach(AIProvider.allCases.filter { $0 != .local }) { provider in
+                CloudProviderSettings(provider: provider, usage: env.usage).id(provider)
             }
             if providerID == AIProvider.local.rawValue {
                 RuntimeSection(runtime: runtime)
@@ -188,6 +250,14 @@ struct AISettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Writing & hybrid routing") {
+                Picker("Answer provider", selection: $writingProvider) {
+                    Text("Same as command provider").tag("same")
+                    ForEach(AIProvider.allCases.filter { $0 != .local }) { Text($0.displayName).tag($0.rawValue) }
+                }
+                Text("Choosing Local for commands and a cloud answer provider creates hybrid routing: local tools and command selection, cloud writing for web answers and text transforms. Each cloud provider uses its saved model and API key.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             DownloadedModelsSection(runtime: runtime)
             Section("Generation") {
                 if providerID == AIProvider.local.rawValue {
@@ -206,7 +276,7 @@ struct AISettings: View {
                 } else {
                     Stepper("Output budget: \(max(2048, cloudMaxTokens)) tokens", value: Binding(
                         get: { max(2048, cloudMaxTokens) }, set: { cloudMaxTokens = $0 }), in: 2048...32768, step: 512)
-                    Text("Cloud output includes reasoning and tool arguments. Replies appear when each provider response is complete. The optional local writing model is used only with Local (MLX).")
+                    Text("Cloud output includes reasoning and tool arguments. Text streams as it arrives; tools execute only after a complete validated response.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if providerID == AIProvider.local.rawValue {
@@ -694,7 +764,7 @@ struct PrivacySettings: View {
                 }
                 permissionRow("Automation (Spotify)", permissions.spotifyAutomation, pane: .automation, request: nil)
                 permissionRow("Accessibility", permissions.accessibility, pane: .accessibility, request: nil)
-                Text("Accessibility isn't required: IVY observes the shortcut with a listen-only event tap (Input Monitoring) or, without it, by reading the modifier state.")
+                Text("Accessibility enables selected-text context and the writing assistant's field replacement. It is optional for other features. The main shortcut uses Input Monitoring or the modifier state.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Local by default") {
@@ -848,23 +918,29 @@ struct AdvancedSettings: View {
 // MARK: - Window
 
 @MainActor
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let env: AppEnvironment
     private let navigation = SettingsNavigation()
 
     init(env: AppEnvironment) {
         self.env = env
+        super.init()
     }
 
     func show(section: String? = nil) {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier { env.selectionApplication = frontmost }
         if let section, let target = SettingsSection(rawValue: section) { navigation.section = target }
         if window == nil {
             let controller = NSHostingController(rootView: SettingsView(env: env, navigation: navigation))
             let window = NSWindow(contentViewController: controller)
             window.title = "IVY Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 1000, height: 740))
+            window.contentMinSize = NSSize(width: 820, height: 620)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             window.setFrameAutosaveName("IVYSettings")
             self.window = window
@@ -874,4 +950,6 @@ final class SettingsWindowController {
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
     }
+
+    func windowWillClose(_ notification: Notification) { env.notch.workspaceVisible = false }
 }

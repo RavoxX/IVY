@@ -22,9 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = SettingsWindowController(env: env)
         setupWindow = SetupWindowController(env: env)
         env.settingsPresenter = { [weak self] section in
-            self?.env.notch.dismiss()
+            self?.env.notch.moveToWorkspace()
             self?.settingsWindow.show(section: section)
         }
+
+        #if DEBUG
+        if CommandLine.arguments.contains("--settings-preview") {
+            DebugBridge.install(env: env)
+            settingsWindow.show(section: "connectors")
+            return
+        }
+        #endif
 
         notchController = NotchWindowController(model: env.notch, settings: env.settings)
 
@@ -36,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notch.dismiss()
         }
         shortcuts.start()
+        env.writingAssist.start()
         env.shortcuts = shortcuts
         appliedShortcut = env.settings.activationShortcut
         appliedGesture = env.settings.gestureConfiguration
@@ -62,8 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if !env.settings.bool(.startMinimized) {
             env.notch.openDashboard()
         }
+        UpdateInstaller.confirmLaunch()
         Log.ui.info("IVY launched (shortcut detection: \(self.shortcuts.mode.rawValue, privacy: .public))")
     }
+
+    @objc func showSettings(_ sender: Any?) { env.openSettings() }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         settingsWindow.show()
@@ -71,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        env.writingAssist.stop()
         shortcuts?.stop()
         Task {
             await env.llm.unloadModel()
@@ -96,19 +109,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// step only acts when its value actually changed).
     private func applySettings() {
         let settings = env.settings
-        statusItem.setVisible(settings.bool(.showMenuBarIcon))
+        statusItem?.setVisible(settings.bool(.showMenuBarIcon))
 
         let shortcut = settings.activationShortcut
         let gesture = settings.gestureConfiguration
         if shortcut != appliedShortcut || gesture != appliedGesture {
             appliedShortcut = shortcut
             appliedGesture = gesture
-            shortcuts.update(shortcut: shortcut, configuration: gesture)
+            shortcuts?.update(shortcut: shortcut, configuration: gesture)
         }
         let display = settings.string(.displayPreference)
         if display != appliedDisplay {
             appliedDisplay = display
-            notchController.relayout()
+            notchController?.relayout()
         }
     }
 }

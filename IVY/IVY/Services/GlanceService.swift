@@ -65,20 +65,20 @@ final class GlanceService: ObservableObject {
         let now = Date()
 
         // Reminders due today (+ overdue).
-        if reminders.hasAccess, let due = try? await reminders.reminders(scope: .today, now: now) {
+        if settings.dashboardWidgets.contains(.reminders), reminders.hasAccess, let due = try? await reminders.reminders(scope: .today, now: now) {
             let count = due.items.count
             let overdue = due.overdue
             let text = count == 0 ? "No reminders today"
                 : "\(count) reminder\(count == 1 ? "" : "s") today\(overdue > 0 ? " · \(overdue) overdue" : "")"
             result.append(Item(id: "reminders", symbol: "checklist", text: text, tint: overdue > 0 ? .red : .orange,
                                query: "What's on my to-do list today?"))
-        } else {
+        } else if settings.dashboardWidgets.contains(.reminders) {
             result.append(Item(id: "reminders", symbol: "checklist", text: "Today's to-dos", tint: .orange,
                                query: "What's on my to-do list today?"))
         }
 
         // Next event today.
-        if calendar.authorizationStatus == .fullAccess, let events = try? await calendar.events(scope: "today", now: now),
+        if settings.dashboardWidgets.contains(.event), calendar.authorizationStatus == .fullAccess, let events = try? await calendar.events(scope: "today", now: now),
            let next = events.first(where: { !$0.isAllDay && $0.end > now }) {
             let time = next.start <= now ? "now" : next.start.formatted(date: .omitted, time: .shortened)
             result.append(Item(id: "event", symbol: "calendar", text: "\(next.title) · \(time)", tint: .red,
@@ -86,7 +86,7 @@ final class GlanceService: ObservableObject {
         }
 
         // Unread mail, only when Mail is already open and IVY may already talk to it.
-        if settings.bool(.mailOnDashboard), mail.isRunning {
+        if settings.dashboardWidgets.contains(.mail), settings.bool(.mailOnDashboard), mail.isRunning {
             let status = await Task.detached(priority: .utility) {
                 PermissionService.automationStatus(bundleID: MailService.bundleID)
             }.value
@@ -97,7 +97,7 @@ final class GlanceService: ObservableObject {
         }
 
         // Focus.
-        if let name = focus.activeName {
+        if settings.dashboardWidgets.contains(.focus), let name = focus.activeName {
             result.append(Item(id: "focus", symbol: "moon.fill", text: "\(name) Focus", tint: .purple, query: "What focus is on?"))
         }
 
@@ -112,6 +112,9 @@ final class GlanceService: ObservableObject {
                                text: "Battery \(percent)%\(state)",
                                tint: snapshot.onBattery && percent <= 20 ? .red : .green, query: "How's my battery?"))
         }
-        return Array(result.prefix(4))
+        let selected = settings.dashboardWidgets
+        return selected.compactMap { widget in
+            result.first { $0.id == widget.rawValue || (widget == .battery && $0.id == "thermal") }
+        }
     }
 }

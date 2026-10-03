@@ -37,6 +37,7 @@ struct DashboardView: View {
 
 struct DashboardHeader: View {
     @ObservedObject var model: NotchViewModel
+    @AppStorage(SettingsKey.dashboardBatteryHeader.rawValue) private var showBattery = true
     @ObservedObject var battery: BatteryMonitor
 
     var body: some View {
@@ -54,7 +55,7 @@ struct DashboardHeader: View {
                 .help(tab.label)
             }
             Spacer()
-            if let reading = battery.reading {
+            if showBattery, let reading = battery.reading {
                 HStack(spacing: 5) {
                     Text("\(reading.percent)%")
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -106,15 +107,18 @@ struct BatteryGlyph: View {
 // MARK: - Home
 
 struct DashboardHome: View {
+    @AppStorage(SettingsKey.dashboardMusic.rawValue) private var showMusic = true
     @ObservedObject var model: NotchViewModel
     @ObservedObject var music: MusicController
 
     var body: some View {
         HStack(spacing: 18) {
-            NowPlayingView(music: music)
-            Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1)
+            if showMusic {
+                NowPlayingView(music: music)
+                Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1)
+            }
             QuickActions(model: model, glance: model.env.glance)
-                .frame(width: 190)
+                .frame(maxWidth: showMusic ? 190 : .infinity)
         }
     }
 }
@@ -161,15 +165,8 @@ struct QuickActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if glance.items.isEmpty {
-                Button { model.submit("What's on my to-do list today?") } label: {
-                    Label("Today", systemImage: "checklist").frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(DashboardTileStyle())
-            } else {
-                ForEach(glance.items) { item in
-                    GlanceRow(item: item) { if let query = item.query { model.submit(query) } }
-                }
+            ForEach(glance.items) { item in
+                GlanceRow(item: item) { if let query = item.query { model.submit(query) } }
             }
             Spacer(minLength: 4)
             Button { model.enterTextMode() } label: {
@@ -271,7 +268,7 @@ struct ShelfView: View {
                 } else {
                     HStack(spacing: 10) {
                         ForEach(shelf.items.suffix(5), id: \.self) { url in
-                            ShelfItemView(url: url) { shelf.remove(url) }
+                            ShelfItemView(url: url, ask: { model.env.openSettings(section: "assistant"); model.env.workspaceAttachments = [url] }) { shelf.remove(url) }
                         }
                         Spacer(minLength: 0)
                     }
@@ -294,6 +291,7 @@ struct ShelfView: View {
 
 struct ShelfItemView: View {
     let url: URL
+    var ask: () -> Void = {}
     let remove: () -> Void
 
     var body: some View {
@@ -311,6 +309,7 @@ struct ShelfItemView: View {
         // Drag files back out of the shelf into any app.
         .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
         .contextMenu {
+            Button("Ask IVY about this file", action: ask)
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Button("AirDrop") { ShelfStore.airDrop([url]) }
@@ -344,7 +343,7 @@ struct HistoryListView: View {
             // Plain stack (no AppKit ScrollView) so the notch mask clips it while animating.
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(model.history.prefix(4)) { entry in
-                    HistoryRow(entry: entry)
+                    HistoryRow(entry: entry).onTapGesture { model.env.openSettings(section: "history") }
                 }
                 Spacer(minLength: 0)
             }

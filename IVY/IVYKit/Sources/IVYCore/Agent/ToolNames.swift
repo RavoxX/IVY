@@ -33,6 +33,8 @@ public enum ToolName {
     public static let clipboard = "clipboard"
     public static let dictionary = "dictionary"
     public static let mailSearch = "mail_search"
+    public static let calendarUpdate = "calendar_update"
+    public static let undoLastAction = "undo_last_action"
     public static let calendarCreate = "calendar_create"
     public static let shortcutRun = "shortcut_run"
     public static let focus = "focus"

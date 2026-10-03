@@ -30,7 +30,11 @@ struct NotchRootView: View {
         case .dashboard:
             DashboardView(model: model).transition(reveal)
         case .assistant:
-            AssistantView(model: model).transition(reveal)
+            if model.writingAssistVisible {
+                WritingAssistView(model: model, service: model.env.writingAssist).transition(reveal)
+            } else {
+                AssistantView(model: model).transition(reveal)
+            }
         }
     }
 }
@@ -125,6 +129,9 @@ struct AssistantHeader: View {
             IVYMark(active: model.phase == .listening || model.phase.isBusy || model.phase == .speaking)
                 .frame(width: 16, height: 16)
             Spacer()
+            Button { model.env.openSettings(section: "assistant") } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
+            }.buttonStyle(.plain).help("Continue in the assistant window")
             Button(action: model.stopButtonTapped) {
                 RoundedRectangle(cornerRadius: 2.5)
                     .fill(.white.opacity(0.85))
@@ -144,6 +151,9 @@ struct AssistantBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            let choice = model.activeModelChoice
+            Text(choice.provider.displayName + " · " + choice.model)
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             switch model.phase {
             case .listening:
                 ListeningView(level: model.audioLevel, shortcut: model.env.settings.activationShortcut)
@@ -181,7 +191,7 @@ struct AssistantBody: View {
         case .loadingModel:
             LoadingView(text: "Loading local model…")
         case .thinking:
-            if model.answer.isEmpty { LoadingView(text: nil) }
+            if model.answer.isEmpty { LoadingView(text: "Waiting for " + model.activeModelChoice.provider.displayName + "…") }
         case .error(let message):
             ErrorView(message: message, actionTitle: actionTitle) { model.performErrorAction() }
         default:

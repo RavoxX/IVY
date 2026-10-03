@@ -23,6 +23,7 @@ enum DebugBridge {
         ) { notification in
             let command = notification.object as? String ?? ""
             let info = notification.userInfo ?? [:]
+            if let pid = info["pid"] as? String, pid != String(ProcessInfo.processInfo.processIdentifier) { return }
             MainActor.assumeIsolated { handle(command, info: info, env: env) }
         }
         Log.ui.info("Debug bridge installed")

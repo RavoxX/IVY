@@ -9,13 +9,13 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>IVY controls Spotify playback, checks your Mail inbox (sender, subject and date only) when you ask about email, and, when you ask, the system appearance (dark mode).</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>IVY reads your calendar when you ask about your schedule and adds events when you ask it to. Calendar data stays on your Mac.</string>
+	<string>IVY reads your calendar and creates or edits events when you ask. With cloud AI enabled, requested event details may be sent to your selected provider.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>IVY reads your calendar when you ask about your schedule.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>IVY listens while you hold its shortcut so you can speak questions. Audio is transcribed locally on your Mac and never stored or uploaded.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>IVY reads, creates and completes reminders when you ask about your to-do list. Reminder data stays on your Mac.</string>
+	<string>IVY reads, creates and completes reminders when you ask. With cloud AI enabled, requested reminder details may be sent to your selected provider.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>IVY reads and creates reminders when you ask about your to-do list.</string>
 </dict>

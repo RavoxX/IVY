@@ -17,6 +17,12 @@ public final class ToolRegistry: @unchecked Sendable {
         tools[tool.name] = tool
     }
 
+    public func remove(names: [String]) {
+        lock.lock(); defer { lock.unlock() }
+        for name in names { tools.removeValue(forKey: name) }
+        order.removeAll { names.contains($0) }
+    }
+
     public func tool(named name: String) -> (any IVYTool)? {
         lock.lock(); defer { lock.unlock() }
         return tools[name] ?? tools[Self.normalize(name)]

@@ -17,6 +17,17 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case showGlance = "general.showGlance"
     case proactiveNudges = "general.proactiveNudges"
 
+    case dashboardWidgets = "dashboard.widgets"
+    case dashboardMusic = "dashboard.music"
+    case dashboardBatteryHeader = "dashboard.batteryHeader"
+    case assistantPreferences = "assistant.preferences"
+    case taskModels = "ai.taskModels"
+    case writingAssistEnabled = "writing.enabled"
+    case writingAssistOnSelection = "writing.onSelection"
+    case writingLanguage = "writing.language"
+    case writingProvider = "ai.writingProvider"
+    case conversationMinutes = "ai.conversationMinutes"
+
     // AI
     case cloudMaxResponseTokens = "ai.cloudMaxResponseTokens"
     case aiProvider = "ai.provider"
@@ -81,6 +92,16 @@ public final class SettingsStore: @unchecked Sendable {
         .displayPreference: "auto",
         .showGlance: true,
         .proactiveNudges: true,
+        .dashboardWidgets: "reminders,event,mail,focus,battery",
+        .dashboardMusic: true,
+        .dashboardBatteryHeader: true,
+        .assistantPreferences: "",
+        .taskModels: "{}",
+        .writingAssistEnabled: true,
+        .writingAssistOnSelection: true,
+        .writingLanguage: "English",
+        .writingProvider: "same",
+        .conversationMinutes: 30,
         .cloudMaxResponseTokens: 2048,
         .aiProvider: AIProvider.local.rawValue,
         .openAIModel: AIProvider.openAI.defaultModel,
@@ -175,9 +196,9 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public var generationOptions: GenerationOptions {
-        GenerationOptions(maxTokens: aiProvider == .local ? max(32, int(.maxResponseTokens)) : max(2048, int(.cloudMaxResponseTokens)),
+        GenerationOptions(maxTokens: modelChoice(for: .commands).provider == .local ? max(32, int(.maxResponseTokens)) : max(2048, int(.cloudMaxResponseTokens)),
                           temperature: double(.temperature),
-                          contextLength: aiProvider == .local ? max(2048, int(.contextLength)) : 128_000)
+                          contextLength: modelChoice(for: .commands).provider == .local ? max(2048, int(.contextLength)) : 128_000)
     }
 
     /// `~/Library/Application Support/IVY/Models` unless overridden.

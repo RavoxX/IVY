@@ -93,6 +93,28 @@ final class ReminderService: @unchecked Sendable {
         return Self.item(from: reminder)
     }
 
+    func undoCreation(_ original: ReminderItem) async throws -> String {
+        try await requireAccess()
+        guard let reminder = store.calendarItem(withIdentifier: original.id) as? EKReminder,
+              Self.item(from: reminder) == original else {
+            throw ToolError.failed("The reminder was changed or removed since IVY created it; undo was stopped.")
+        }
+        try store.remove(reminder, commit: true)
+        guard store.calendarItem(withIdentifier: original.id) == nil else { throw ToolError.failed("The reminder couldn't be removed.") }
+        return "Removed the reminder IVY created: \(original.title)."
+    }
+
+    func undoCompletion(_ completed: ReminderItem) async throws -> String {
+        try await requireAccess()
+        guard let reminder = store.calendarItem(withIdentifier: completed.id) as? EKReminder,
+              Self.item(from: reminder) == completed else {
+            throw ToolError.failed("The reminder has changed since completion; undo was stopped.")
+        }
+        reminder.isCompleted = false
+        try store.save(reminder, commit: true)
+        return "Marked “\(completed.title)” as open again."
+    }
+
     static func item(from reminder: EKReminder) -> ReminderItem {
         var dueDate: Date?
         var hasTime = false

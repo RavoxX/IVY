@@ -5,12 +5,12 @@ import os
 /// Background web lookup for questions the local model can't answer from memory.
 ///
 /// Uses DuckDuckGo's HTML endpoint (no key, no account) and Wikipedia's public API as a
-/// fallback, then reads the top page so the model can answer from real text. Only the
+/// fallback, then reads several pages so the model can answer from real text. Only the
 /// search query is sent; it can be switched off in Settings ▸ Integrations.
 struct WebSearchService: Sendable {
     struct Result: Sendable {
         var links: [SourceLink]
-        /// Readable text from the best page (trimmed), for grounding the answer.
+        /// Source-associated page excerpts and available dates, for grounding the answer.
         var excerpt: String?
     }
 
@@ -29,13 +29,21 @@ struct WebSearchService: Sendable {
         if links.isEmpty { links = (try? await wikipedia(query)) ?? [] }
         guard !links.isEmpty else { throw ToolError.unavailable("I couldn't reach the web search. Check your connection.") }
 
-        var excerpt: String?
-        for link in links.prefix(3) {
-            if let text = await readableText(from: link.url), text.count > 200 {
-                excerpt = String(text.prefix(1800))
-                break
+        let sources = Array(links.prefix(3))
+        let excerpts = await withTaskGroup(of: (Int, PageExcerpt?).self) { group in
+            for (index, link) in sources.enumerated() {
+                group.addTask { (index, await readableText(from: link.url)) }
+            }
+            var values: [(Int, PageExcerpt)] = []
+            for await (index, page) in group {
+                if let page, page.text.count > 200 { values.append((index, page)) }
+            }
+            return values.sorted { $0.0 < $1.0 }.map { index, page in
+                let published = page.published.map { "\nPage-declared publication date: " + $0 } ?? ""
+                return "Source: \(sources[index].url.absoluteString)\nRetrieved: \(Date().formatted(.iso8601))" + published + "\n" + String(page.text.prefix(1400))
             }
         }
+        let excerpt = excerpts.isEmpty ? nil : excerpts.joined(separator: "\n\n")
         Log.tools.info("Web search returned \(links.count) results")
         return Result(links: Array(links.prefix(5)), excerpt: excerpt)
     }
@@ -104,7 +112,9 @@ struct WebSearchService: Sendable {
 
     // MARK: - Page text
 
-    private func readableText(from url: URL) async -> String? {
+    private struct PageExcerpt: Sendable { let text: String; let published: String? }
+
+    private func readableText(from url: URL) async -> PageExcerpt? {
         guard ["http", "https"].contains(url.scheme ?? "") else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
@@ -113,12 +123,30 @@ struct WebSearchService: Sendable {
               (response.mimeType ?? "text/html").contains("html"),
               data.count < 3_000_000 else { return nil }
         let html = String(decoding: data, as: UTF8.self)
-        return HTMLText.paragraphs(html)
+        return PageExcerpt(text: HTMLText.paragraphs(html), published: HTMLText.publicationDate(html))
     }
 }
 
 /// Tiny HTML → text helpers (no WebKit needed).
 enum HTMLText {
+    /// Keep declared dates separate from retrieval time; never infer a publication date.
+    static func publicationDate(_ html: String) -> String? {
+        let patterns = [
+            #"<meta\b[^>]*(?:property|name)\s*=\s*["'](?:article:published_time|datePublished)["'][^>]*content\s*=\s*["']([^"']+)["']"#,
+            #"<meta\b[^>]*content\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["'](?:article:published_time|datePublished)["']"#,
+            #""datePublished"\s*:\s*"([^"\r\n]+)""#,
+        ]
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withFullDate]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                  let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                  let range = Range(match.range(at: 1), in: html) else { continue }
+            let date = String(html[range].prefix(10))
+            if date.count == 10, formatter.date(from: date) != nil { return date }
+        }
+        return nil
+    }
+
     static func plain(_ html: String) -> String {
         decodeEntities(html.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression))
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
