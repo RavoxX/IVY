@@ -1,3 +1,4 @@
+import AppKit
 import IVYCore
 import Security
 import SwiftUI
@@ -31,8 +32,14 @@ struct CloudProviderSettings: View {
             }
             Text("Choose a text model with function calling that your API account can access. You can enter another model ID above.")
                 .font(.caption).foregroundStyle(.secondary)
-            SecureField(keySaved ? "Replace API key" : "API key", text: $apiKey)
-                .onSubmit { saveKey() }
+            HStack {
+                SecureField(keySaved ? "Replace API key" : "API key", text: $apiKey)
+                    .onSubmit { saveKey() }
+                Button("Paste") {
+                    if let value = NSPasteboard.general.string(forType: .string) { apiKey = value }
+                }
+                .help("Paste your API key from the clipboard")
+            }
             HStack {
                 Button("Save API Key", action: saveKey)
                     .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

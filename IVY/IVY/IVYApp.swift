@@ -14,8 +14,9 @@ enum IVYApp {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        // Agent app: no Dock icon, no main menu; UI lives in the notch and menu bar.
+        // Agent app: no Dock icon; UI lives in the notch and menu bar.
         app.setActivationPolicy(.accessory)
+        ApplicationMenu.install()
         withExtendedLifetime(delegate) {
             app.run()
         }

@@ -227,7 +227,7 @@ With **Local (MLX)** selected, Settings ▸ AI lets you pick Qwen3 1.7B / 4B / 8
 
 ### Cloud AI
 
-In **Settings ▸ AI**, choose **Google Gemini**, **Anthropic Claude** or **OpenAI**, select a model preset (or enter a custom text model ID with function calling), enter your own API key and click **Save API Key**. Each provider keeps its own model preference and Keychain entry. You can replace or remove a key there. Settings reset restores Local as the provider; saved keys remain in Keychain until you remove them.
+In **Settings ▸ AI**, choose **Google Gemini**, **Anthropic Claude** or **OpenAI**, select a model preset (or enter a custom text model ID with function calling), paste your own API key with **⌘V** or the **Paste** button and click **Save API Key**. Standard editing shortcuts also work in other Settings and notch text fields. Each provider keeps its own model preference and Keychain entry. You can replace or remove a key there. Settings reset restores Local as the provider; saved keys remain in Keychain until you remove them.
 
 The selected provider handles chat, tool planning, web answers, clipboard rewrites and dictionary generation. The optional local writing model applies only to Local (MLX). Cloud AI needs internet access and API access/billing for the chosen model. Invalid credentials, unavailable models, quota errors and incomplete responses are reported; IVY never silently switches providers or falls back to another model. Cloud replies appear when each API response completes; the output budget includes reasoning and tool arguments.
 
