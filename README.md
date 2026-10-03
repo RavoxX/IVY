@@ -36,6 +36,8 @@ The expanded notch stays black through its upper 80% and gradually becomes more 
 
 ## Screenshots
 
+Current interface, shown with sample content. The notch previews include the bottom fade and omit model labels.
+
 <p align="center">
   <img src="docs/screenshots/reminders.png" alt="IVY answering “What's on my to-do list for today?” with three reminders" width="32%">
   <img src="docs/screenshots/music.png" alt="IVY playing Billie Jean with the Spotify playback card" width="32%">
@@ -53,6 +55,18 @@ The expanded notch stays black through its upper 80% and gradually becomes more 
 | File shelf with AirDrop |
 | --- |
 | ![Drag-and-drop file shelf with an AirDrop target](docs/screenshots/shelf.png) |
+
+| Writing assistant | AI settings and models by task |
+| --- | --- |
+| ![IVY previewing a clearer rewrite in the notch with Accept and Revise actions](docs/screenshots/writing.png) | ![IVY AI settings with per-task model choices and cloud provider configuration](docs/screenshots/settings-ai.jpg) |
+
+| App connectors | Dashboard customization |
+| --- | --- |
+| ![Categorized connector gallery with Gmail, Google Drive, Calendar and real service icons](docs/screenshots/settings-connectors.jpg) | ![Dashboard settings for choosing, ordering and showing widgets](docs/screenshots/settings-dashboard.jpg) |
+
+<p align="center">
+  <img src="docs/screenshots/settings-general.jpg" alt="Full IVY settings window with general preferences, notch behavior and display selection" width="90%">
+</p>
 
 ## Requirements
 
