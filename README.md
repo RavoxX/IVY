@@ -195,7 +195,7 @@ Google Workspace MCP is currently a developer preview requiring project/API enab
 
 **AI Usage** shows IVY requests, reported input/output/cached tokens, failures and timing by provider/model, JSON export and billing links. Usage records contain no prompts, responses, keys or arguments. They do not show your provider's remaining balance or total bill.
 
-**Updates ▸ Check for updates** reads the latest stable GitHub release. **Update & restart** verifies the compatible DMG's SHA-256, app bundle ID/version and signing team, stages it, and replaces the writable installed app after exit. A startup acknowledgement is required before deleting the backup; installation/startup failure restores the old copy. Move IVY out of its DMG/App Translocation into a writable Applications folder first. Unsigned builds cannot pass verification. Checks/updates are explicit; signing/notarization limitations still apply.
+**Updates ▸ Check for updates** reads the latest stable GitHub release. **Update & restart** verifies the compatible DMG's SHA-256, app bundle ID/version and signing team, stages it, and starts an installer from an intact signed app bundle. IVY stays open until the installer confirms it has started and verified the staged app. It then replaces the writable installed app after exit. A startup acknowledgement is required before deleting the backup; installation/startup failure restores the old copy. Move IVY out of its DMG/App Translocation into a writable Applications folder first. Unsigned builds cannot pass verification. Checks/updates are explicit; signing/notarization limitations still apply. Versions 2.0.0 and 2.0.1 require a one-time manual installation of 2.0.2 or newer to fix their installer launch failure.
 
 ## Architecture
 
@@ -356,6 +356,8 @@ cd IVY/IVYKit && swift test
 ```
 
 Also covers SSE event boundaries, partial-tool rejection, editable-field exclusions, Unicode replacement, per-task routing, usage, versions, MCP transport/pagination, schemas and failed-step recovery. Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
+
+For installer integration checks on macOS, build Debug and run `python3 scripts/test_updater.py --debug-app /path/to/Debug/IVY.app --previous-app /path/to/older/IVY.app`. The script copies signed bundles into disposable folders, tests installer readiness, actual replacement/restart and rejection of a damaged update, and leaves the installed app untouched. Pass an older Debug build whose settings preview does not acknowledge startup with `--no-ack-app` to also verify rollback. The new app launches in an isolated settings preview with no shortcuts or model calls.
 
 ## Known limitations
 

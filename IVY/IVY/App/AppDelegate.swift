@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--settings-preview") {
             DebugBridge.install(env: env)
             settingsWindow.show(section: "connectors")
+            UpdateInstaller.confirmLaunch()
             return
         }
         #endif

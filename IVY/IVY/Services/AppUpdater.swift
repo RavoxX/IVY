@@ -44,8 +44,9 @@ final class AppUpdater: ObservableObject {
 
     func check() {
         guard !busy else { return }
+        busy = true
         task = Task { [self] in
-            busy = true; message = "Checking GitHub…"; defer { busy = false }
+            message = "Checking GitHub…"; defer { busy = false }
             do {
                 let release = try await latest()
                 if let remote = ReleaseVersion(release.version), let current = ReleaseVersion(currentVersion), remote > current {
@@ -57,8 +58,9 @@ final class AppUpdater: ObservableObject {
     }
     func update() {
         guard !busy, let release = available else { return }
+        busy = true
         task = Task { [self] in
-            busy = true; progress = 0; message = "Downloading IVY \(release.version)…"
+            progress = 0; message = "Downloading IVY \(release.version)…"
             defer { busy = false; progress = nil }
             let folder = AppPaths.temporary.appendingPathComponent("Update-\(UUID().uuidString)", isDirectory: true)
             let mount = folder.appendingPathComponent("mount", isDirectory: true)
@@ -108,13 +110,31 @@ final class AppUpdater: ObservableObject {
                 guard copied == 0 else { throw UpdateError.installation("The update couldn't be staged.") }
                 try UpdateInstaller.verify(staged, matching: target, version: release.version)
                 try Task.checkCancellation()
-                guard let executable = Bundle.main.executableURL else { throw UpdateError.signature }
-                let helper = folder.appendingPathComponent("installer")
-                try fm.copyItem(at: executable, to: helper)
-                try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+                // terminate() exits before this task's defer runs. Detach the image now,
+                // once the staged signed bundle no longer depends on the mounted volume.
+                let detached = await Task.detached { UpdateInstaller.process("/usr/bin/hdiutil", ["detach", mount.path, "-quiet"]) }.value
+                guard detached == 0 else { throw UpdateError.installation("The update disk image couldn't be detached. IVY stayed open; try again.") }
+                mounted = false
+                // The signature binds the executable to its bundle's Info.plist and resources.
+                // Launching a bare copied executable causes macOS to kill it before main().
+                let helperBundle = folder.appendingPathComponent("Installer.app", isDirectory: true)
+                let helperCopy = await Task.detached { UpdateInstaller.process("/usr/bin/ditto", [target.path, helperBundle.path]) }.value
+                guard helperCopy == 0, let helper = Bundle(url: helperBundle)?.executableURL else {
+                    throw UpdateError.installation("The signed installer couldn't be prepared. IVY will stay open.")
+                }
+                try UpdateInstaller.verify(helperBundle, matching: target, version: currentVersion)
                 let process = Process(); process.executableURL = helper
+                process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
                 process.arguments = ["--ivy-install-update", String(ProcessInfo.processInfo.processIdentifier), target.path, staged.path, release.version, folder.path]
                 try process.run()
+                do {
+                    try await UpdateInstaller.waitUntilReady(process, folder: folder)
+                    try Task.checkCancellation()
+                }
+                catch {
+                    if process.isRunning { process.terminate(); process.waitUntilExit() }
+                    throw error
+                }
                 handedOff = true; message = "Installing and restarting IVY…"
                 NSApp.terminate(nil)
             } catch is CancellationError { message = "Update cancelled. Your app wasn't replaced." }
@@ -147,12 +167,16 @@ final class AppUpdater: ObservableObject {
     }
 }
 
-/// Runs from a copied executable after the app exits. All paths are fixed arguments,
+/// Runs from an intact signed bundle after the app exits. All paths are fixed arguments,
 /// never shell text. Replacement is on the destination volume; a failed launch rolls back.
 enum UpdateInstaller {
     static func runIfRequested() -> Bool {
         let args = CommandLine.arguments
-        guard args.dropFirst().first == "--ivy-install-update" else { return false }
+        var smokeTest = false
+        #if DEBUG
+        smokeTest = args.dropFirst().first == "--ivy-install-update-test"
+        #endif
+        guard args.dropFirst().first == "--ivy-install-update" || smokeTest else { return false }
         guard args.count == 7, let pid = Int32(args[2]), pid > 1, ReleaseVersion(args[5]) != nil else { return true }
         let target = URL(fileURLWithPath: args[3]).standardizedFileURL
         let source = URL(fileURLWithPath: args[4]).standardizedFileURL
@@ -160,12 +184,14 @@ enum UpdateInstaller {
         let backup = target.deletingLastPathComponent().appendingPathComponent(".IVY-backup-\(UUID().uuidString).app")
         let fm = FileManager.default
         let receipt = folder.appendingPathComponent("launch-receipt.json")
+        let errorFile = smokeTest ? target.deletingLastPathComponent().appendingPathComponent("update-error.json") : AppPaths.applicationSupport.appendingPathComponent("update-error.json")
         var movedOld = false; var installed = false
         do {
             guard folder.deletingLastPathComponent() == AppPaths.temporary.standardizedFileURL,
                   folder.lastPathComponent.hasPrefix("Update-"), source == folder.appendingPathComponent("IVY.app"),
                   target.pathExtension == "app", !target.path.hasPrefix(folder.path + "/") else { throw UpdateError.signature }
             try verify(source, matching: target, version: args[5])
+            try Data(String(ProcessInfo.processInfo.processIdentifier).utf8).write(to: folder.appendingPathComponent("installer-ready"), options: .atomic)
             for _ in 0..<600 {
                 if kill(pid, 0) != 0 { break }
                 Thread.sleep(forTimeInterval: 0.1)
@@ -175,7 +201,11 @@ enum UpdateInstaller {
             // ditto preserves executable permissions, resource forks and signing metadata.
             guard process("/usr/bin/ditto", [source.path, target.path]) == 0 else { throw UpdateError.installation("Couldn't install the update.") }
             installed = true; try verify(target, matching: backup, version: args[5])
-            guard process("/usr/bin/open", ["-n", target.path, "--args", "--ivy-update-receipt", receipt.path]) == 0 else { throw UpdateError.installation("Couldn't restart IVY.") }
+            var launch = ["-n", target.path, "--args", "--ivy-update-receipt", receipt.path]
+            #if DEBUG
+            if smokeTest { launch.append("--settings-preview") }
+            #endif
+            guard process("/usr/bin/open", launch) == 0 else { throw UpdateError.installation("Couldn't restart IVY.") }
             var acknowledged = false
             for _ in 0..<200 {
                 if fm.fileExists(atPath: receipt.path) { acknowledged = true; break }
@@ -183,10 +213,10 @@ enum UpdateInstaller {
             }
             guard acknowledged else { throw UpdateError.installation("The new app didn't finish starting. The previous version was restored.") }
             try? fm.removeItem(at: backup)
-            try? fm.removeItem(at: AppPaths.applicationSupport.appendingPathComponent("update-error.json"))
+            try? fm.removeItem(at: errorFile)
         } catch {
             if movedOld {
-                for application in NSRunningApplication.runningApplications(withBundleIdentifier: "com.ravoxx.IVY") where application.bundleURL?.standardizedFileURL == target && application.processIdentifier != pid {
+                for application in NSRunningApplication.runningApplications(withBundleIdentifier: "com.ravoxx.IVY") where application.bundleURL?.resolvingSymlinksInPath() == target.resolvingSymlinksInPath() && application.processIdentifier != pid {
                     _ = application.terminate()
                     for _ in 0..<30 {
                         if application.isTerminated { break }
@@ -196,14 +226,30 @@ enum UpdateInstaller {
                 }
                 if installed || fm.fileExists(atPath: target.path) { try? fm.removeItem(at: target) }
                 try? fm.moveItem(at: backup, to: target)
-                _ = process("/usr/bin/open", ["-n", target.path])
+                if !smokeTest { _ = process("/usr/bin/open", ["-n", target.path]) }
             }
             let receipt: JSONValue = ["message": .string(error.localizedDescription), "date": .string(Date().formatted(.iso8601))]
-            try? fm.createDirectory(at: AppPaths.applicationSupport, withIntermediateDirectories: true)
-            try? Data(receipt.jsonString().utf8).write(to: AppPaths.applicationSupport.appendingPathComponent("update-error.json"), options: .atomic)
+            try? fm.createDirectory(at: errorFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data(receipt.jsonString().utf8).write(to: errorFile, options: .atomic)
         }
         try? fm.removeItem(at: folder)
         return true
+    }
+
+    /// Keep the running app alive until the signed installer has started and verified its
+    /// inputs. Process.run() alone doesn't detect a subsequent code-signing launch kill.
+    static func waitUntilReady(_ installer: Process, folder: URL) async throws {
+        let receipt = folder.appendingPathComponent("installer-ready")
+        let expected = Data(String(installer.processIdentifier).utf8)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard installer.isRunning else {
+                throw UpdateError.installation("The installer couldn't start (exit \(installer.terminationStatus)). IVY stayed open. Download the update manually or try again.")
+            }
+            if (try? Data(contentsOf: receipt)) == expected { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw UpdateError.installation("The installer didn't confirm it was ready. IVY stayed open; try again or download the DMG manually.")
     }
     static func confirmLaunch() {
         let args = CommandLine.arguments
@@ -217,9 +263,18 @@ enum UpdateInstaller {
     }
 
     static func verify(_ app: URL, matching installed: URL, version: String) throws {
-        guard let bundle = Bundle(url: app), let old = Bundle(url: installed),
-              bundle.bundleIdentifier == old.bundleIdentifier, bundle.bundleIdentifier == "com.ravoxx.IVY",
-              let actual = bundle.infoDictionary?["CFBundleShortVersionString"] as? String,
+        // Bundle caches Info.plist by URL. After replacing a bundle at that same URL it
+        // can still report the previous version, falsely rejecting a valid installation.
+        func metadata(_ url: URL) throws -> [String: Any] {
+            let data = try Data(contentsOf: url.appendingPathComponent("Contents/Info.plist"))
+            guard data.count < 1_048_576,
+                  let value = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { throw UpdateError.signature }
+            return value
+        }
+        let bundle = try metadata(app), old = try metadata(installed)
+        guard let identifier = bundle["CFBundleIdentifier"] as? String,
+              identifier == old["CFBundleIdentifier"] as? String, identifier == "com.ravoxx.IVY",
+              let actual = bundle["CFBundleShortVersionString"] as? String,
               ReleaseVersion(actual) == ReleaseVersion(version) else { throw UpdateError.signature }
         func signing(_ url: URL) throws -> String {
             var code: SecStaticCode?
