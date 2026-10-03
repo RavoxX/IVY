@@ -40,6 +40,9 @@ final class WritingAssistService: ObservableObject {
     private var generationID = UUID()
     private var keyMonitor: Any?
     private var selectionTimer: Timer?
+    private var selectionMonitor: Any?
+    private var selectionCheck: DispatchWorkItem?
+    private var selectionSettler = WritingSelectionSettler<WritingSelectionSignature>()
     private var defaultsObserver: NSObjectProtocol?
     private let indicator = WritingSelectionIndicator()
 
@@ -63,25 +66,57 @@ final class WritingAssistService: ObservableObject {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }; keyMonitor = nil
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }; defaultsObserver = nil
         selectionTimer?.invalidate(); selectionTimer = nil
+        if let selectionMonitor { NSEvent.removeMonitor(selectionMonitor) }; selectionMonitor = nil
     }
     private func configureSelectionMonitor() {
         selectionTimer?.invalidate(); selectionTimer = nil
-        indicator.hide()
+        if let selectionMonitor { NSEvent.removeMonitor(selectionMonitor) }; selectionMonitor = nil
+        resetAutomaticSelection()
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused) else { cancel(); return }
         guard settings.bool(.writingAssistOnSelection), AXIsProcessTrusted() else { return }
+        selectionMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch event.type {
+                case .leftMouseDown, .leftMouseDragged, .keyDown:
+                    self.resetAutomaticSelection()
+                default:
+                    self.pollSelection()
+                }
+            }
+        }
         selectionTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollSelection() }
         }
     }
     private func pollSelection() {
+        guard !indicator.isHandlingClick else { return }
+        selectionCheck?.cancel(); selectionCheck = nil
+        // Dragging and Shift-selection can last across several polling intervals.
+        // Never show an affordance until the gesture has ended.
+        guard NSEvent.pressedMouseButtons & 1 == 0, !NSEvent.modifierFlags.contains(.shift) else {
+            resetAutomaticSelection(); return
+        }
         guard !isWorking, !isApplying, canPresentAutomatically?() != false,
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier,
-              let captured = try? TextSelectionSnapshot.capture(), let bounds = captured.selectionBounds else { indicator.hide(); return }
+              let captured = try? TextSelectionSnapshot.capture(), let bounds = captured.selectionBounds else { resetAutomaticSelection(); return }
+        guard selectionSettler.shouldShow(selection: captured.signature, isSelecting: false, at: ProcessInfo.processInfo.systemUptime) else {
+            indicator.hide()
+            let check = DispatchWorkItem { [weak self] in self?.pollSelection() }
+            selectionCheck = check
+            DispatchQueue.main.asyncAfter(deadline: .now() + selectionSettler.delay, execute: check)
+            return
+        }
         indicator.show(nextTo: bounds) { [weak self] in
             guard let self, self.canPresentAutomatically?() != false, captured.isCurrent,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == captured.pid else { return }
             self.prepare(snapshot: captured)
         }
+    }
+    private func resetAutomaticSelection() {
+        selectionCheck?.cancel(); selectionCheck = nil
+        selectionSettler.reset()
+        indicator.hide()
     }
     func prepare(application: NSRunningApplication? = nil) {
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused), !isApplying else { return }
@@ -140,7 +175,23 @@ final class WritingAssistService: ObservableObject {
             } catch { if generationID == id { self.error = error.localizedDescription } }
         }
     }
-    func cancel() { indicator.hide(); generationID = UUID(); work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+    func cancel() { resetAutomaticSelection(); generationID = UUID(); work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+}
+
+/// Includes the accessibility element so identical selections in different fields
+/// cannot reuse a previous field's debounce interval.
+private struct WritingSelectionSignature: Equatable {
+    let element: AXUIElement
+    let pid: pid_t
+    let original: String
+    let location: Int
+    let length: Int
+    let fullValue: String?
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.pid == rhs.pid && lhs.location == rhs.location && lhs.length == rhs.length &&
+        lhs.original == rhs.original && lhs.fullValue == rhs.fullValue && CFEqual(lhs.element, rhs.element)
+    }
 }
 
 /// Accept targets the original accessibility element, not whichever app has focus now.
@@ -153,6 +204,9 @@ private final class TextSelectionSnapshot {
     let original: String
     let range: CFRange
     let fullValue: String?
+    var signature: WritingSelectionSignature {
+        WritingSelectionSignature(element: element, pid: pid, original: original, location: range.location, length: range.length, fullValue: fullValue)
+    }
     init(element: AXUIElement, pid: pid_t, applicationName: String, original: String, range: CFRange, fullValue: String?) {
         self.element = element; self.pid = pid; self.applicationName = applicationName; self.original = original; self.range = range; self.fullValue = fullValue
     }

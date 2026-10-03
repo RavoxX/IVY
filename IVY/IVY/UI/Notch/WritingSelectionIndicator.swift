@@ -18,11 +18,13 @@ final class WritingSelectionIndicator: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         let button = IndicatorButton(frame: CGRect(origin: .zero, size: WritingIndicatorPlacement.size))
         button.isBordered = false; button.title = ""
-        button.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Open IVY writing assistant")
-        button.contentTintColor = .white
+        button.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Open IVY writing assistant")?
+            .withSymbolConfiguration(.init(pointSize: 7, weight: .semibold))
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .white.withAlphaComponent(0.9)
         button.wantsLayer = true
-        button.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        button.layer?.cornerRadius = 8
+        button.layer?.backgroundColor = NSColor(calibratedRed: 0.24, green: 0.42, blue: 0.31, alpha: 0.96).cgColor
+        button.layer?.cornerRadius = 5
         button.target = self; button.action = #selector(clicked)
         button.toolTip = "Rewrite selected text with IVY"
         button.setAccessibilityLabel("Open IVY writing assistant")
@@ -38,6 +40,8 @@ final class WritingSelectionIndicator: NSObject {
         panel.orderFrontRegardless()
     }
     func hide() { panel.orderOut(nil); onClick = nil }
+    /// Polling must not remove the panel between its own mouse-down and mouse-up.
+    var isHandlingClick: Bool { (panel.contentView as? IndicatorButton)?.isTrackingClick == true }
     @objc private func clicked() {
         let action = onClick; hide(); action?()
     }
@@ -52,5 +56,11 @@ private final class IndicatorPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 private final class IndicatorButton: NSButton {
+    private(set) var isTrackingClick = false
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        isTrackingClick = true
+        defer { isTrackingClick = false }
+        super.mouseDown(with: event)
+    }
 }

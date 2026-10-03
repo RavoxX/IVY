@@ -2,7 +2,7 @@ import Foundation
 
 /// Places a compact writing affordance beside a selection, within its display.
 public enum WritingIndicatorPlacement {
-    public static let size = CGSize(width: 24, height: 32)
+    public static let size = CGSize(width: 14, height: 24)
 
     public static func frame(selection: CGRect, visibleScreen: CGRect) -> CGRect? {
         guard !selection.isNull, !selection.isEmpty, !visibleScreen.isEmpty,
