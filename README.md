@@ -175,6 +175,8 @@ Open **Assistant Window** from the IVY menu, or expand a notch response; a runni
 
 Using the activation shortcut returns the assistant to the notch, even while the Assistant Window is open. After dismissal, hover opens the dashboard again. Other settings pages leave the notch available; sending from the Assistant Window moves the response back into that window.
 
+The notch keeps provider and model names out of the assistant and writing views. View or change your model in **Settings ▸ AI**; writing still shows whether selected text is processed locally or sent to the cloud.
+
 Add selected/copied text, PDFs, text documents or images and review extracted context before Send. PDFs are capped at 30 pages and each attachment at 12,000 characters. Screenshot capture is interactive and uses local OCR; this version reads image text, not visual layouts. Attach a selected email and ask “Draft a reply”; no message is sent automatically.
 
 Personal preferences and a 1–120 minute conversation lifetime are editable. Recent reminder/event IDs, file paths and source results remain available for follow-ups. Event changes require confirmation. Compound tasks allow up to eight model passes and twelve tools; repeated calls stop before replaying effects. Failed-step retry runs only failures and confirms again. Undo covers new reminders/events/timers, completed reminders, event time changes and compatible writing replacements; it stops if the item changed afterwards.

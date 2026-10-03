@@ -61,7 +61,7 @@ struct WritingAssistView: View {
                                     Text("Replacing selected text…").font(.caption)
                                 } else if service.isWorking {
                                     ProgressView().controlSize(.small)
-                                    Text("Writing with " + service.activeModelLabel).font(.caption).lineLimit(1)
+                                    Text("Rewriting…").font(.caption).lineLimit(1)
                                     Spacer()
                                     Button("Stop") { service.cancel() }
                                 } else if service.applied {
@@ -84,7 +84,7 @@ struct WritingAssistView: View {
                     if !service.error.isEmpty {
                         Text(service.error).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
                     }
-                    Text(service.activeModelLabel + (service.sendsToCloud ? " · Selection sent when you choose an action" : " · On this Mac"))
+                    Text(service.sendsToCloud ? "Selection sent when you choose an action" : "On this Mac")
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
                 }.padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 16)
             }.frame(height: 320)
