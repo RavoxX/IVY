@@ -147,6 +147,7 @@ struct AssistantWorkspace: View {
         guard !text.isEmpty, !model.isBusy else { return }
         let context = attachments.isEmpty ? nil : attachments.map { "Attachment: \($0.name)\n\($0.text)" }.joined(separator: "\n\n")
         prompt = ""; error = ""
+        model.moveToWorkspace()
         model.submit(text, context: context)
     }
     private func chooseFiles() {

@@ -932,6 +932,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier { env.selectionApplication = frontmost }
         if let section, let target = SettingsSection(rawValue: section) { navigation.section = target }
+        if navigation.section == .assistant { env.notch.moveToWorkspace() }
         if window == nil {
             let controller = NSHostingController(rootView: SettingsView(env: env, navigation: navigation))
             let window = NSWindow(contentViewController: controller)

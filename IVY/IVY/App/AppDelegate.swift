@@ -16,17 +16,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var defaultsObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if CommandLine.arguments.contains("--check-notch-presentation") {
+            let settings = SettingsStore(defaults: UserDefaults(suiteName: "com.ravoxx.IVY.presentation-check.\(UUID().uuidString)")!)
+            settings.set(AIProvider.gemini.rawValue, for: .aiProvider)
+            env = AppEnvironment(settings: settings)
+        } else {
+            env = AppEnvironment()
+        }
+        #else
         env = AppEnvironment()
+        #endif
         let env = self.env!
 
         settingsWindow = SettingsWindowController(env: env)
         setupWindow = SetupWindowController(env: env)
         env.settingsPresenter = { [weak self] section in
-            self?.env.notch.moveToWorkspace()
             self?.settingsWindow.show(section: section)
         }
 
         #if DEBUG
+        if CommandLine.arguments.contains("--check-notch-presentation") {
+            notchController = NotchWindowController(model: env.notch, settings: env.settings)
+            Task { await NotchPresentationChecks.run(env: env, controller: notchController) }
+            return
+        }
         if CommandLine.arguments.contains("--notch-preview") {
             notchController = NotchWindowController(model: env.notch, settings: env.settings)
             DebugBridge.install(env: env)

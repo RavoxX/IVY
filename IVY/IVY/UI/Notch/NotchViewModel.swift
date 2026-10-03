@@ -153,8 +153,7 @@ final class NotchViewModel: ObservableObject {
 
     func activateVoice() {
         guard !settings.bool(.paused) else { return }
-        beginAssistantSession()
-        phase = .listening
+        beginVoiceSession()
         playActivationSound()
 
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -207,6 +206,9 @@ final class NotchViewModel: ObservableObject {
 
     func enterTextMode() {
         guard !settings.bool(.paused) else { return }
+        // A shortcut explicitly returns to the notch, even if the assistant window
+        // is still open and this is a continuation of its current conversation.
+        workspaceVisible = false
         if capture.isRunning { capture.stop() }
         audioLevel = 0
         if mode != .assistant || phase == .listening {
@@ -439,6 +441,7 @@ final class NotchViewModel: ObservableObject {
             if mode == .dashboard, let tab { self.tab = tab }
             return
         }
+        workspaceVisible = false
         if let tab { self.tab = tab }
         mode = .dashboard
         env.battery.setVisible(true)
@@ -639,6 +642,7 @@ final class NotchViewModel: ObservableObject {
     // MARK: - Helpers
 
     private func beginAssistantSession() {
+        workspaceVisible = false
         env.writingAssist.cancel()
         writingAssistVisible = false
         runTask?.cancel()
@@ -659,6 +663,16 @@ final class NotchViewModel: ObservableObject {
         errorAction = nil
         cancelCollapse()
     }
+
+    private func beginVoiceSession() {
+        beginAssistantSession()
+        phase = .listening
+    }
+
+    #if DEBUG
+    /// Exercises the actual voice presentation path without microphone capture or inference.
+    func presentVoiceActivationPreview() { beginVoiceSession() }
+    #endif
 
     private func startCapture() {
         do {

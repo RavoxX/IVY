@@ -5,7 +5,7 @@ import IVYCore
 /// Heavy work (models, engine processes) is lazy, so launching IVY is instant.
 @MainActor
 final class AppEnvironment {
-    let settings = SettingsStore()
+    let settings: SettingsStore
     let permissions = PermissionService()
     let usage = UsageStore(fileURL: AppPaths.applicationSupport.appendingPathComponent("usage.json"))
     let routines = RoutineStore(fileURL: AppPaths.applicationSupport.appendingPathComponent("routines.json"))
@@ -51,7 +51,8 @@ final class AppEnvironment {
     var selectionApplication: NSRunningApplication?
     var settingsPresenter: ((String?) -> Void)?
 
-    init() {
+    init(settings: SettingsStore = SettingsStore()) {
+        self.settings = settings
         connectors = ConnectorManager(registry: registry)
         runtime = RuntimeManager(settings: settings)
         llm = MLXLLMService(settings: settings, governor: governor, usage: { [usage] in await usage.append($0) })

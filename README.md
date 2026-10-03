@@ -173,6 +173,8 @@ Improve grammar/clarity, Rephrase, Shorten, Professional, Friendly and Translate
 
 Open **Assistant Window** from the IVY menu, or expand a notch response; a running task continues in the window. New conversation clears the active conversation and structured tool references. History searches the last 50 stored requests and answers.
 
+Using the activation shortcut returns the assistant to the notch, even while the Assistant Window is open. After dismissal, hover opens the dashboard again. Other settings pages leave the notch available; sending from the Assistant Window moves the response back into that window.
+
 Add selected/copied text, PDFs, text documents or images and review extracted context before Send. PDFs are capped at 30 pages and each attachment at 12,000 characters. Screenshot capture is interactive and uses local OCR; this version reads image text, not visual layouts. Attach a selected email and ask “Draft a reply”; no message is sent automatically.
 
 Personal preferences and a 1–120 minute conversation lifetime are editable. Recent reminder/event IDs, file paths and source results remain available for follow-ups. Event changes require confirmation. Compound tasks allow up to eight model passes and twelve tools; repeated calls stop before replaying effects. Failed-step retry runs only failures and confirms again. Undo covers new reminders/events/timers, completed reminders, event time changes and compatible writing replacements; it stops if the item changed afterwards.
@@ -358,6 +360,8 @@ cd IVY/IVYKit && swift test
 Also covers SSE event boundaries, partial-tool rejection, editable-field exclusions, Unicode replacement, per-task routing, usage, versions, MCP transport/pagination, schemas and failed-step recovery. Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
 
 For installer integration checks on macOS, build Debug and run `python3 scripts/test_updater.py --debug-app /path/to/Debug/IVY.app --previous-app /path/to/older/IVY.app`. The script copies signed bundles into disposable folders, tests installer readiness, actual replacement/restart and rejection of a damaged update, and leaves the installed app untouched. Pass an older Debug build whose settings preview does not acknowledge startup with `--no-ack-app` to also verify rollback. The new app launches in an isolated settings preview with no shortcuts or model calls.
+
+Run `/path/to/Debug/IVY.app/Contents/MacOS/IVY --check-notch-presentation` for presentation regression checks against the real view model and AppKit panel. It uses isolated settings and checks window-to-notch voice/text activation, keyboard focus, dismissal and dashboard reopening without microphone capture or model requests.
 
 ## Known limitations
 
