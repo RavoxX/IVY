@@ -40,6 +40,10 @@ final class MLXLLMService: LocalLLMService, @unchecked Sendable {
         RuntimeManager.isRuntimeInstalled && ModelFiles.isInstalled(at: modelDirectory, kind: .llm)
     }
 
+    var availabilityError: any Error {
+        RuntimeManager.isRuntimeInstalled ? LocalModelError.modelNotInstalled(descriptor.displayName) : LocalModelError.runtimeNotInstalled
+    }
+
     var isLoaded: Bool {
         get async { await engine.loadedModelPath == modelDirectory.path }
     }

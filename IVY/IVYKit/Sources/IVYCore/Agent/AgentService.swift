@@ -112,7 +112,7 @@ public actor AgentService {
     /// the first real request only has to read the user's words. Called when IVY starts
     /// listening or typing; a no-op while the warmed model stays loaded.
     public func warmUp() async {
-        guard let llm, llm.isAvailable else { return }
+        guard let llm = llm?.forRequest(), llm.supportsWarmUp, llm.isAvailable else { return }
         if warmed, await llm.isLoaded { return }
         warmed = false
         do {
@@ -145,6 +145,7 @@ public actor AgentService {
     // MARK: - Processing
 
     func process(_ rawQuery: String, emit: @escaping @Sendable (AgentEvent) -> Void) async {
+        let llm = self.llm?.forRequest()
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             emit(.failed("I didn't catch that."))
@@ -188,10 +189,11 @@ public actor AgentService {
             return
         }
 
-        // 2. Local LLM with tools.
+        // 2. Selected language model with tools.
         guard let llm, llm.isAvailable else {
             phrases?.record(query: query, outcome: .failed)
-            emit(.failed(LocalModelError.modelNotInstalled(ModelCatalog.defaultLLM.displayName).errorDescription!))
+            emit(.failed(llm?.availabilityError.localizedDescription
+                         ?? LocalModelError.modelNotInstalled(ModelCatalog.defaultLLM.displayName).localizedDescription))
             return
         }
         do {
@@ -255,20 +257,19 @@ public actor AgentService {
                 && lastCallNames.allSatisfy { registry.tool(named: $0)?.requiresModelAnswer == true }
             var model = llm
             var passTools = tools
-            if writesAnswer, let writer = writer(), writer.isAvailable, writer !== llm {
+            if writesAnswer, llm.supportsWarmUp, let writer = writer(), writer.isAvailable, writer !== llm {
                 model = writer
                 passTools = []
                 if !(await writer.isLoaded) { emit(.modelLoading) }
             }
             ContextBudget.fit(&messages, historyEnd: &historyEnd, toolSchemas: passTools, options: generation)
-            let raw = try await model.generate(messages: messages, tools: passTools, options: generation) { token in
+            let parsed = try await model.generateResponse(messages: messages, tools: passTools, options: generation) { token in
                 let text = streamed.append(token)
                 if !ToolCallParser.looksLikeToolCallPrefix(text) {
                     emit(.partialText(ToolCallParser.stripThinking(text).trimmingCharacters(in: .whitespacesAndNewlines)))
                 }
             }
             try Task.checkCancellation()
-            let parsed = ToolCallParser.parse(raw)
 
             if parsed.toolCalls.isEmpty {
                 let text = parsed.text.isEmpty ? (lastResults.last?.summary ?? "Done.") : parsed.text
@@ -291,7 +292,7 @@ public actor AgentService {
                 return outcome
             }
 
-            messages.append(.assistant(parsed.text, toolCalls: parsed.toolCalls))
+            messages.append(.assistant(parsed.text, toolCalls: parsed.toolCalls, providerResponse: parsed.providerResponse))
             if firstCall == nil { firstCall = parsed.toolCalls.first }
             lastCallNames = parsed.toolCalls.map(\.name)
             var results: [ToolResult] = []
@@ -450,7 +451,7 @@ final class StreamBuffer: @unchecked Sendable {
 
 public enum SystemPrompt {
     public static let text = """
-    You are IVY, a concise personal macOS assistant running locally on the user's Mac. \
+    You are IVY, a concise personal assistant for the user's Mac. \
     Respond with the shortest useful answer unless additional detail is necessary. \
     Answers appear in a small overlay under the notch: usually one or two short sentences, no \
     filler, no greetings, no follow-up offers, no markdown headings.

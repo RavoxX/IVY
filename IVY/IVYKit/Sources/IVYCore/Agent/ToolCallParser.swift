@@ -14,6 +14,13 @@ public enum ToolCallParser {
     public struct Output: Equatable, Sendable {
         public var text: String
         public var toolCalls: [ToolCall]
+        public var providerResponse: ProviderResponse?
+
+        public init(text: String, toolCalls: [ToolCall], providerResponse: ProviderResponse? = nil) {
+            self.text = text
+            self.toolCalls = toolCalls
+            self.providerResponse = providerResponse
+        }
     }
 
     public static func parse(_ raw: String) -> Output {

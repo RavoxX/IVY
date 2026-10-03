@@ -31,7 +31,7 @@ struct SetupView: View {
                 IVYMark(active: false).frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Welcome to IVY").font(.title2.bold())
-                    Text("A private assistant that lives in your notch. Everything runs locally on your Mac.")
+                    Text("A private assistant that lives in your notch. Local AI by default; optional cloud AI with your own API key.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -62,6 +62,9 @@ struct SetupView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("IVY downloads its AI once and then runs fully offline on your Mac: the MLX runtime (~1.5 GB), Qwen3 4B, Whisper and Kokoro.")
                                 .font(.callout).foregroundStyle(.secondary)
+                            Button("Use Gemini, Claude or OpenAI instead…") { env.openSettings(section: "ai") }
+                            Text("Cloud AI needs no local language model. Install Whisper for voice input and Kokoro for optional spoken answers, or finish setup and use text.")
+                                .font(.caption).foregroundStyle(.secondary)
                             HStack {
                                 Button {
                                     runtime.installEverything(requiredModels)

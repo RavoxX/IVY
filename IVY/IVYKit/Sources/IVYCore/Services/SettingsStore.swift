@@ -18,6 +18,11 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case proactiveNudges = "general.proactiveNudges"
 
     // AI
+    case cloudMaxResponseTokens = "ai.cloudMaxResponseTokens"
+    case aiProvider = "ai.provider"
+    case openAIModel = "ai.openAIModel"
+    case claudeModel = "ai.claudeModel"
+    case geminiModel = "ai.geminiModel"
     case llmModelID = "ai.modelID"
     case llmModelPath = "ai.modelPath"
     case contextLength = "ai.contextLength"
@@ -76,6 +81,11 @@ public final class SettingsStore: @unchecked Sendable {
         .displayPreference: "auto",
         .showGlance: true,
         .proactiveNudges: true,
+        .cloudMaxResponseTokens: 2048,
+        .aiProvider: AIProvider.local.rawValue,
+        .openAIModel: AIProvider.openAI.defaultModel,
+        .claudeModel: AIProvider.claude.defaultModel,
+        .geminiModel: AIProvider.gemini.defaultModel,
         .llmModelID: ModelCatalog.defaultLLM.id,
         .llmModelPath: "",
         .contextLength: 8192,
@@ -136,6 +146,15 @@ public final class SettingsStore: @unchecked Sendable {
 
     // MARK: Typed conveniences
 
+    public var aiProvider: AIProvider {
+        AIProvider(rawValue: string(.aiProvider)) ?? .local
+    }
+
+    public func cloudModel(for provider: AIProvider) -> String {
+        guard let key = provider.modelSetting else { return "" }
+        return string(key).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public var ttsEnabled: Bool {
         get { bool(.ttsEnabled) }
         set { set(newValue, for: .ttsEnabled) }
@@ -156,9 +175,9 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public var generationOptions: GenerationOptions {
-        GenerationOptions(maxTokens: max(32, int(.maxResponseTokens)),
+        GenerationOptions(maxTokens: aiProvider == .local ? max(32, int(.maxResponseTokens)) : max(2048, int(.cloudMaxResponseTokens)),
                           temperature: double(.temperature),
-                          contextLength: max(2048, int(.contextLength)))
+                          contextLength: aiProvider == .local ? max(2048, int(.contextLength)) : 128_000)
     }
 
     /// `~/Library/Application Support/IVY/Models` unless overridden.

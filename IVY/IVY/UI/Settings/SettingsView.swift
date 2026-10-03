@@ -127,6 +127,8 @@ struct AISettings: View {
     @ObservedObject var runtime: RuntimeManager
     @AppStorage(SettingsKey.llmModelID.rawValue) private var modelID = ModelCatalog.defaultLLM.id
     @AppStorage(SettingsKey.llmModelPath.rawValue) private var modelPath = ""
+    @AppStorage(SettingsKey.cloudMaxResponseTokens.rawValue) private var cloudMaxTokens = 2048
+    @AppStorage(SettingsKey.aiProvider.rawValue) private var providerID = AIProvider.local.rawValue
     @AppStorage(SettingsKey.writingModelID.rawValue) private var writingModelID = ""
     @AppStorage(SettingsKey.contextLength.rawValue) private var contextLength = 8192
     @AppStorage(SettingsKey.temperature.rawValue) private var temperature = 0.3
@@ -138,55 +140,87 @@ struct AISettings: View {
 
     var body: some View {
         Form {
-            RuntimeSection(runtime: runtime)
-            Section("Local model") {
-                Picker("Model", selection: $modelID) {
-                    ForEach(ModelCatalog.llms) { model in
-                        Text("\(model.displayName) · \(model.formattedSize)").tag(model.id)
+            Section("AI provider") {
+                Picker("Use", selection: $providerID) {
+                    ForEach(AIProvider.allCases) { Text($0.displayName).tag($0.rawValue) }
+                }
+                .onChange(of: providerID) { _, _ in
+                    guard !env.notch.isBusy else { return }
+                    Task {
+                        await env.llm.unloadModel()
+                        await env.writerLLM.unloadModel()
                     }
                 }
-                .onChange(of: modelID) { _, _ in Task { await env.llm.unloadModel() } }
-                if let model = ModelCatalog.descriptor(id: modelID) {
-                    ModelRow(model: model, runtime: runtime)
-                }
-                TextField("Custom model path", text: $modelPath, prompt: Text("Optional MLX model folder"))
-                Text("IVY runs \(ModelCatalog.descriptor(id: modelID)?.displayName ?? "the model") with MLX-LM on your Mac. A custom path overrides the selection.")
+                Text("Local runs on your Mac. Cloud sends your requests, recent conversation and tool results (including requested clipboard, mail or calendar data) to the selected provider. API usage is billed to your account. Speech recognition and TTS stay local.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Writing model") {
-                Picker("Write answers with", selection: $writingModelID) {
-                    Text("Same as the main model").tag("")
-                    ForEach(ModelCatalog.llms) { model in
-                        Text("\(model.displayName) · \(model.formattedSize)").tag(model.id)
+            if let provider = AIProvider(rawValue: providerID), provider != .local {
+                CloudProviderSettings(provider: provider).id(provider)
+            }
+            if providerID == AIProvider.local.rawValue {
+                RuntimeSection(runtime: runtime)
+                Section("Local model") {
+                    Picker("Model", selection: $modelID) {
+                        ForEach(ModelCatalog.llms) { model in
+                            Text("\(model.displayName) · \(model.formattedSize)").tag(model.id)
+                        }
                     }
+                    .onChange(of: modelID) { _, _ in Task { await env.llm.unloadModel() } }
+                    if let model = ModelCatalog.descriptor(id: modelID) {
+                        ModelRow(model: model, runtime: runtime)
+                    }
+                    TextField("Custom model path", text: $modelPath, prompt: Text("Optional MLX model folder"))
+                    Text("IVY runs \(ModelCatalog.descriptor(id: modelID)?.displayName ?? "the model") with MLX-LM on your Mac. A custom path overrides the selection.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .onChange(of: writingModelID) { _, _ in Task { await env.writerLLM.unloadModel() } }
-                if let model = ModelCatalog.descriptor(id: writingModelID) {
-                    ModelRow(model: model, runtime: runtime)
+                Section("Writing model") {
+                    Picker("Write answers with", selection: $writingModelID) {
+                        Text("Same as the main model").tag("")
+                        ForEach(ModelCatalog.llms) { model in
+                            Text("\(model.displayName) · \(model.formattedSize)").tag(model.id)
+                        }
+                    }
+                    .onChange(of: writingModelID) { _, _ in Task { await env.writerLLM.unloadModel() } }
+                    if let model = ModelCatalog.descriptor(id: writingModelID) {
+                        ModelRow(model: model, runtime: runtime)
+                    }
+                    Text("Optional. The main model stays in charge of commands and picking tools, which keeps IVY fast; web answers, clipboard rewrites, definitions and synonyms are written by this model instead. For example, Qwen3 4B for commands and Qwen3 14B for writing. Both stay in memory while in use.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Optional. The main model stays in charge of commands and picking tools, which keeps IVY fast; web answers, clipboard rewrites, definitions and synonyms are written by this model instead. For example, Qwen3 4B for commands and Qwen3 14B for writing. Both stay in memory while in use.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             DownloadedModelsSection(runtime: runtime)
             Section("Generation") {
-                Picker("Context length", selection: $contextLength) {
-                    ForEach([4096, 8192, 16384, 32768], id: \.self) { Text("\($0) tokens").tag($0) }
-                }
-                LabeledContent("Temperature") {
-                    HStack {
-                        Slider(value: $temperature, in: 0...1, step: 0.05).frame(width: 180)
-                        Text(String(format: "%.2f", temperature)).monospacedDigit().frame(width: 40)
+                if providerID == AIProvider.local.rawValue {
+                    Picker("Context length", selection: $contextLength) {
+                        ForEach([4096, 8192, 16384, 32768], id: \.self) { Text("\($0) tokens").tag($0) }
+                    }
+                    LabeledContent("Temperature") {
+                        HStack {
+                            Slider(value: $temperature, in: 0...1, step: 0.05).frame(width: 180)
+                            Text(String(format: "%.2f", temperature)).monospacedDigit().frame(width: 40)
+                        }
                     }
                 }
-                Stepper("Maximum response length: \(maxTokens) tokens", value: $maxTokens, in: 64...2048, step: 32)
-                Picker("Unload model after inactivity", selection: $unloadMinutes) {
-                    Text("Never").tag(0)
-                    ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
+                if providerID == AIProvider.local.rawValue {
+                    Stepper("Maximum response length: \(maxTokens) tokens", value: $maxTokens, in: 64...2048, step: 32)
+                } else {
+                    Stepper("Output budget: \(max(2048, cloudMaxTokens)) tokens", value: Binding(
+                        get: { max(2048, cloudMaxTokens) }, set: { cloudMaxTokens = $0 }), in: 2048...32768, step: 512)
+                    Text("Cloud output includes reasoning and tool arguments. Replies appear when each provider response is complete. The optional local writing model is used only with Local (MLX).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if providerID == AIProvider.local.rawValue {
+                    Picker("Unload model after inactivity", selection: $unloadMinutes) {
+                        Text("Never").tag(0)
+                        ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
+                    }
                 }
                 Toggle("Instant commands (skip the model for simple commands)", isOn: $fastRouting)
                 Toggle("Adapt replies to the active Focus", isOn: $focusAware)
             }
-            EnergySection(env: env, energy: env.energy, energyAware: $energyAware)
+            if providerID == AIProvider.local.rawValue {
+                EnergySection(env: env, energy: env.energy, energyAware: $energyAware)
+            }
         }
         .formStyle(.grouped)
         .onAppear { runtime.refresh() }
@@ -357,7 +391,7 @@ struct DownloadedModelsSection: View {
                 Task { await runtime.deleteAllModels() }
             }
         } message: {
-            Text("IVY can't answer, transcribe or speak until you download a model again.")
+            Text("Local AI needs its models downloaded again. Cloud AI remains available when configured.")
         }
     }
 }
@@ -665,10 +699,10 @@ struct PrivacySettings: View {
             }
             Section("Local by default") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Speech, prompts, the language model and TTS all run on this Mac.", systemImage: "lock.laptopcomputer")
+                    Label("Speech recognition and TTS run on this Mac. Local AI is the default; cloud AI is optional in Settings ▸ AI.", systemImage: "lock.laptopcomputer")
                     Label("Microphone audio is kept in memory and deleted right after transcription.", systemImage: "mic.slash")
-                    Label("No analytics, no telemetry, no conversation uploads.", systemImage: "eye.slash")
-                    Label("Network is used only to download models, for song lookup (optional) and by Spotify/Claude Code themselves.", systemImage: "network")
+                    Label("No analytics or telemetry. With cloud AI, requests, recent conversation and tool results go to your selected provider.", systemImage: "eye.slash")
+                    Label("Network is used for model downloads, optional cloud AI, song lookup, web search, weather and Spotify/Claude Code.", systemImage: "network")
                 }
                 .font(.callout)
             }

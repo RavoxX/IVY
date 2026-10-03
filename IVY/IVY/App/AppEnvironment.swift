@@ -10,6 +10,7 @@ final class AppEnvironment {
     let history = HistoryStore(fileURL: AppPaths.historyFile)
     let runtime: RuntimeManager
     let llm: MLXLLMService
+    let languageModel: ConfiguredLLMService
     /// Optional second model for writing answers (web search, clipboard); see Settings ▸ AI.
     let writerLLM: MLXLLMService
     let phrases = PhraseMemory(fileURL: AppPaths.applicationSupport.appendingPathComponent("learned-phrases.json"))
@@ -44,10 +45,13 @@ final class AppEnvironment {
         runtime = RuntimeManager(settings: settings)
         llm = MLXLLMService(settings: settings, governor: governor)
         writerLLM = MLXLLMService(settings: settings, governor: governor, modelKey: .writingModelID)
+        languageModel = ConfiguredLLMService(local: llm, settings: settings) { provider in
+            Keychain.read(account: provider.keychainAccount) ?? ""
+        }
         whisper = LocalWhisperService(settings: settings, governor: governor)
         tts = KokoroMLXTTSService(settings: settings, governor: governor)
         let activeWriter = Self.activeWriter(settings: settings, writer: writerLLM)
-        textService = LLMTextService(main: llm, writer: activeWriter, settings: settings)
+        textService = LLMTextService(main: languageModel, writer: activeWriter, settings: settings)
         nudges = NudgeService(settings: settings, calendar: calendar, energy: energy, focus: focus)
         glance = GlanceService(settings: settings, reminders: reminders, calendar: calendar, mail: mail,
                                focus: focus, energy: energy)
@@ -61,7 +65,7 @@ final class AppEnvironment {
         let settings = self.settings
         let focus = self.focus
         agent = AgentService(
-            llm: llm, registry: registry, router: router, policy: SecurityPolicy(),
+            llm: languageModel, registry: registry, router: router, policy: SecurityPolicy(),
             options: { settings.generationOptions },
             fastRoutingEnabled: { settings.bool(.fastCommandRouting) },
             situation: {
@@ -96,10 +100,10 @@ final class AppEnvironment {
     }
 
     /// The writing model, when one is chosen, differs from the main model and is downloaded.
-    static func activeWriter(settings: SettingsStore, writer: MLXLLMService) -> @Sendable () -> MLXLLMService? {
+    static func activeWriter(settings: SettingsStore, writer: MLXLLMService) -> @Sendable () -> (any LocalLLMService)? {
         {
             let id = settings.string(.writingModelID)
-            guard !id.isEmpty, id != settings.string(.llmModelID) || !settings.string(.llmModelPath).isEmpty,
+            guard settings.aiProvider == .local, !id.isEmpty, id != settings.string(.llmModelID) || !settings.string(.llmModelPath).isEmpty,
                   writer.isAvailable else { return nil }
             return writer
         }

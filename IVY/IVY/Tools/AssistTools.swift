@@ -68,7 +68,7 @@ struct ClipboardTool: IVYTool {
             output = exact
         } else if action.usesModel {
             guard text.isAvailable else {
-                return .failure("The local model isn't installed, so I can't rewrite the clipboard yet.")
+                return .failure("Configure an AI model in Settings ▸ AI before rewriting the clipboard.")
             }
             // Stream the result into a card while the model writes it.
             let title = action.title
@@ -135,7 +135,7 @@ struct DictionaryTool: IVYTool {
                 result.fromSystemDictionary = false
             }
         case .synonyms, .antonyms:
-            guard text.isAvailable else { return .failure("The local model isn't installed, so I can't list \(mode.rawValue) yet.") }
+            guard text.isAvailable else { return .failure("Configure an AI model in Settings ▸ AI before listing \(mode.rawValue).") }
             let reply = try await text.complete(system: WordLookup.listSystemPrompt,
                                                 user: WordLookup.listPrompt(mode: mode, word: word), maxTokens: 80)
             let list = WordLookup.parseList(reply, excluding: word)

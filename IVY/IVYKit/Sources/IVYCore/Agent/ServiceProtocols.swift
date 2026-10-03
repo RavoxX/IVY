@@ -9,18 +9,23 @@ public struct ChatMessage: Sendable, Equatable {
     public var content: String
     public var toolCalls: [ToolCall]
     public var toolName: String?
+    /// Native provider blocks retained in memory for tool IDs and reasoning signatures.
+    public var providerResponse: ProviderResponse?
 
-    public init(role: Role, content: String, toolCalls: [ToolCall] = [], toolName: String? = nil) {
+    public init(role: Role, content: String, toolCalls: [ToolCall] = [], toolName: String? = nil,
+                providerResponse: ProviderResponse? = nil) {
         self.role = role
         self.content = content
         self.toolCalls = toolCalls
         self.toolName = toolName
+        self.providerResponse = providerResponse
     }
 
     public static func system(_ text: String) -> ChatMessage { ChatMessage(role: .system, content: text) }
     public static func user(_ text: String) -> ChatMessage { ChatMessage(role: .user, content: text) }
-    public static func assistant(_ text: String, toolCalls: [ToolCall] = []) -> ChatMessage {
-        ChatMessage(role: .assistant, content: text, toolCalls: toolCalls)
+    public static func assistant(_ text: String, toolCalls: [ToolCall] = [],
+                                 providerResponse: ProviderResponse? = nil) -> ChatMessage {
+        ChatMessage(role: .assistant, content: text, toolCalls: toolCalls, providerResponse: providerResponse)
     }
     public static func tool(_ name: String, _ payload: String) -> ChatMessage {
         ChatMessage(role: .tool, content: payload, toolName: name)
@@ -71,11 +76,14 @@ public enum LocalModelError: LocalizedError, Sendable, Equatable {
     }
 }
 
-/// Local language model abstraction. The default implementation (`MLXLLMService`) runs
-/// Qwen3-4B through MLX-LM, but any backend that speaks chat messages can be plugged in.
+/// Language model abstraction shared by local MLX and explicitly selected cloud providers.
 public protocol LocalLLMService: AnyObject, Sendable {
-    /// Weights and runtime are present on disk.
+    /// The runtime/model or cloud credentials are configured.
     var isAvailable: Bool { get }
+    var availabilityError: any Error { get }
+    var supportsWarmUp: Bool { get }
+    /// Pins provider, model and credentials for an entire agent request.
+    func forRequest() -> any LocalLLMService
     var isLoaded: Bool { get async }
     func loadModel() async throws
     func unloadModel() async
@@ -83,6 +91,19 @@ public protocol LocalLLMService: AnyObject, Sendable {
     func generate(messages: [ChatMessage], tools: [JSONValue], options: GenerationOptions,
                   onToken: @escaping @Sendable (String) -> Void) async throws -> String
     func cancelGeneration() async
+    func generateResponse(messages: [ChatMessage], tools: [JSONValue], options: GenerationOptions,
+                          onToken: @escaping @Sendable (String) -> Void) async throws -> ToolCallParser.Output
+}
+
+public extension LocalLLMService {
+    var availabilityError: any Error { LocalModelError.modelNotInstalled(ModelCatalog.defaultLLM.displayName) }
+    var supportsWarmUp: Bool { true }
+    func forRequest() -> any LocalLLMService { self }
+    func generateResponse(messages: [ChatMessage], tools: [JSONValue], options: GenerationOptions,
+                          onToken: @escaping @Sendable (String) -> Void) async throws -> ToolCallParser.Output {
+        let raw = try await generate(messages: messages, tools: tools, options: options, onToken: onToken)
+        return ToolCallParser.parse(raw)
+    }
 }
 
 // MARK: - Speech

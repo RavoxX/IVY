@@ -53,7 +53,9 @@ IVY $VERSION — a private AI assistant for your MacBook notch
 1. Drag IVY into Applications and open it.
 2. In the setup window click "Install Everything". IVY downloads its local AI
    (MLX runtime, Qwen3 4B, Whisper, Kokoro — about 5.8 GB) once from the web.
-   After that everything runs offline on your Mac.
+   After that local AI runs offline on your Mac. Alternatively, finish setup and
+   select Gemini, Claude or OpenAI in Settings > AI with your own API key.
+   Cloud text needs no local models; voice still needs Whisper and the runtime.
 3. Hold ⌘ + ⌥ to talk to IVY, or hover the notch.
 
 If macOS says the app can't be opened, right-click IVY ▸ Open (builds that

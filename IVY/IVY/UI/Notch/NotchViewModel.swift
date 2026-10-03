@@ -582,7 +582,7 @@ final class NotchViewModel: ObservableObject {
         let env = self.env
         if speech, env.whisper.isAvailable { Task.detached { try? await env.whisper.prepare() } }
         // Loads the model and prefills the system prompt + tools, so the first answer is fast.
-        if env.llm.isAvailable { Task.detached { await env.agent.warmUp() } }
+        if env.languageModel.supportsWarmUp, env.llm.isAvailable { Task.detached { await env.agent.warmUp() } }
     }
 
     private func playActivationSound() {
