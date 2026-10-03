@@ -27,6 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
+        if CommandLine.arguments.contains("--notch-preview") {
+            notchController = NotchWindowController(model: env.notch, settings: env.settings)
+            DebugBridge.install(env: env)
+            env.notch.isPinnedForDemo = true
+            env.notch.presentDemo(query: "Help me polish this sentence.",
+                                  answer: "Select editable text, then click the small green button beside it to open IVY's writing tools.",
+                                  cards: [], phase: .answered)
+            return
+        }
         if CommandLine.arguments.contains("--settings-preview") {
             DebugBridge.install(env: env)
             settingsWindow.show(section: "connectors")

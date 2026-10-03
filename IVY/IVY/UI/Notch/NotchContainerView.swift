@@ -21,8 +21,10 @@ final class NotchContainerView: NSView {
     private let shadowLayer = CAShapeLayer()
     private let clipView = NSView()
     private let maskLayer = CAShapeLayer()
+    private let backgroundView = NSView()
+    private let backgroundFade = CAGradientLayer()
     private let effectView = NSVisualEffectView()
-    private let tintView = SolidColorView(color: NSColor.black.withAlphaComponent(0.95))
+    private let tintView = SolidColorView(color: .black)
     private let bandView = SolidColorView(color: .black)
     private var current: Spec?
 
@@ -31,7 +33,8 @@ final class NotchContainerView: NSView {
         wantsLayer = true
         layer?.masksToBounds = false
 
-        shadowLayer.fillColor = NSColor.black.cgColor
+        // A filled shadow silhouette would make the translucent body opaque again.
+        shadowLayer.fillColor = NSColor.clear.cgColor
         shadowLayer.shadowColor = NSColor.black.cgColor
         shadowLayer.shadowRadius = 18
         shadowLayer.shadowOffset = CGSize(width: 0, height: -8)
@@ -42,15 +45,23 @@ final class NotchContainerView: NSView {
         clipView.layer?.mask = maskLayer
         addSubview(clipView)
 
+        backgroundView.wantsLayer = true
+        backgroundFade.colors = [1.0, 1.0, 0.82, 0.45].map { NSColor.black.withAlphaComponent($0).cgColor }
+        backgroundFade.locations = [0, 0.8, 0.9, 1]
+        backgroundFade.startPoint = CGPoint(x: 0.5, y: 1)
+        backgroundFade.endPoint = CGPoint(x: 0.5, y: 0)
+        backgroundView.layer?.mask = backgroundFade
+        clipView.addSubview(backgroundView)
+
         effectView.material = .hudWindow
         effectView.blendingMode = .behindWindow
         effectView.state = .active
         effectView.appearance = NSAppearance(named: .darkAqua)
-        clipView.addSubview(effectView)
+        backgroundView.addSubview(effectView)
 
         // Dark translucent body, fully opaque black band at the top (merges with the camera housing).
         // Subviews (not raw sublayers) so AppKit keeps the stacking order.
-        clipView.addSubview(tintView)
+        backgroundView.addSubview(tintView)
         clipView.addSubview(bandView)
 
         clipView.addSubview(content)
@@ -65,7 +76,8 @@ final class NotchContainerView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         clipView.frame = bounds
-        effectView.frame = clipView.bounds
+        backgroundView.frame = clipView.bounds
+        effectView.frame = backgroundView.bounds
         clipView.subviews.last?.frame = clipView.bounds
         tintView.frame = clipView.bounds
         if let current { layoutBand(current) }
@@ -75,6 +87,7 @@ final class NotchContainerView: NSView {
     private func layoutBand(_ spec: Spec) {
         // AppKit layers are bottom-left based: the band sits at the top of the canvas.
         bandView.frame = CGRect(x: 0, y: bounds.height - spec.band, width: bounds.width, height: spec.band)
+        backgroundFade.frame = CGRect(x: 0, y: bounds.height - spec.size.height, width: bounds.width, height: spec.size.height)
     }
 
     /// Path of the notch shape centered at the top of the canvas (AppKit coordinates).
@@ -97,6 +110,7 @@ final class NotchContainerView: NSView {
             CATransaction.setDisableActions(true)
             maskLayer.path = newPath
             shadowLayer.path = newPath
+            shadowLayer.shadowPath = newPath
             shadowLayer.shadowOpacity = spec.isOpen ? 0.45 : 0
             CATransaction.commit()
             return
@@ -107,17 +121,17 @@ final class NotchContainerView: NSView {
         let response: CGFloat = spec.isOpen ? 0.42 : 0.32
         let dampingFraction: CGFloat = spec.isOpen ? 0.78 : 0.95
         let stiffness = pow(2 * .pi / response, 2)
-        for layer in [maskLayer, shadowLayer] {
-            let from = layer.presentation()?.path ?? layer.path
-            let animation = CASpringAnimation(keyPath: "path")
+        for (layer, key) in [(maskLayer, "path"), (shadowLayer, "shadowPath")] {
+            let from = key == "path" ? (layer.presentation()?.path ?? layer.path) : (layer.presentation()?.shadowPath ?? layer.shadowPath)
+            let animation = CASpringAnimation(keyPath: key)
             animation.mass = 1
             animation.stiffness = stiffness
             animation.damping = 2 * dampingFraction * sqrt(stiffness)
             animation.fromValue = from
             animation.toValue = newPath
             animation.duration = animation.settlingDuration
-            layer.path = newPath
-            layer.add(animation, forKey: "path")
+            if key == "path" { layer.path = newPath } else { layer.shadowPath = newPath }
+            layer.add(animation, forKey: key)
         }
         let fade = CABasicAnimation(keyPath: "shadowOpacity")
         fade.fromValue = shadowLayer.presentation()?.shadowOpacity ?? shadowLayer.shadowOpacity

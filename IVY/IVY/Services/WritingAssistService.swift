@@ -28,6 +28,7 @@ final class WritingAssistService: ObservableObject {
     @Published private(set) var error = ""
     @Published private(set) var applied = false
     @Published private(set) var readyToAccept = false
+    @Published private(set) var isApplying = false
     @Published var action: WritingAction = .improve
     var onPresent: (() -> Void)?
     var canPresentAutomatically: (() -> Bool)?
@@ -40,7 +41,7 @@ final class WritingAssistService: ObservableObject {
     private var keyMonitor: Any?
     private var selectionTimer: Timer?
     private var defaultsObserver: NSObjectProtocol?
-    private var previousSelection = ""
+    private let indicator = WritingSelectionIndicator()
 
     init(textService: LLMTextService, settings: SettingsStore, undo: UndoStore) {
         self.textService = textService; self.settings = settings; self.undo = undo
@@ -58,12 +59,14 @@ final class WritingAssistService: ObservableObject {
     }
     func stop() {
         cancel()
+        indicator.hide()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }; keyMonitor = nil
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }; defaultsObserver = nil
         selectionTimer?.invalidate(); selectionTimer = nil
     }
     private func configureSelectionMonitor() {
         selectionTimer?.invalidate(); selectionTimer = nil
+        indicator.hide()
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused) else { cancel(); return }
         guard settings.bool(.writingAssistOnSelection), AXIsProcessTrusted() else { return }
         selectionTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
@@ -71,18 +74,22 @@ final class WritingAssistService: ObservableObject {
         }
     }
     private func pollSelection() {
-        guard !isWorking, canPresentAutomatically?() != false, NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier,
-              let captured = try? TextSelectionSnapshot.capture() else { return }
-        let key = "\(captured.pid):\(CFHash(captured.element)):\(captured.range.location):\(captured.range.length):" + captured.original
-        guard key != previousSelection else { return }
-        previousSelection = key; prepare(snapshot: captured)
+        guard !isWorking, !isApplying, canPresentAutomatically?() != false,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier,
+              let captured = try? TextSelectionSnapshot.capture(), let bounds = captured.selectionBounds else { indicator.hide(); return }
+        indicator.show(nextTo: bounds) { [weak self] in
+            guard let self, self.canPresentAutomatically?() != false, captured.isCurrent,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == captured.pid else { return }
+            self.prepare(snapshot: captured)
+        }
     }
     func prepare(application: NSRunningApplication? = nil) {
-        guard settings.bool(.writingAssistEnabled), !settings.bool(.paused) else { return }
+        guard settings.bool(.writingAssistEnabled), !settings.bool(.paused), !isApplying else { return }
         do { prepare(snapshot: try TextSelectionSnapshot.capture(application: application)) }
         catch { original = ""; suggestion = ""; self.error = error.localizedDescription; onPresent?() }
     }
     private func prepare(snapshot: TextSelectionSnapshot) {
+        indicator.hide()
         cancel(); selection = snapshot; original = snapshot.original
         sourceName = snapshot.applicationName; suggestion = ""; error = ""; applied = false
         onPresent?()
@@ -95,7 +102,7 @@ final class WritingAssistService: ObservableObject {
     var sendsToCloud: Bool { settings.modelChoice(for: action == .translate ? .translation : .grammar).provider != .local }
 
     func generate() {
-        guard let selection, !isWorking else { return }
+        guard let selection, !isWorking, !isApplying else { return }
         let id = UUID(); generationID = id
         suggestion = ""; error = ""; applied = false; readyToAccept = false; isWorking = true
         let instruction = action.instruction + (action == .translate ? " Target language: " + String(settings.string(.writingLanguage).prefix(80)) + "." : " Keep the original language.")
@@ -121,14 +128,19 @@ final class WritingAssistService: ObservableObject {
         }
     }
     func accept() {
-        guard readyToAccept, !isWorking, !suggestion.isEmpty, let selection, !applied else { return }
-        do {
-            let replacement = try selection.replace(with: suggestion)
-            applied = true; error = ""; original = suggestion
-            undo.add(label: "Restore selected text") { try await MainActor.run { try replacement.undo() } }
-        } catch { self.error = error.localizedDescription }
+        guard readyToAccept, !isWorking, !isApplying, !suggestion.isEmpty, let selection, !applied else { return }
+        isApplying = true
+        let id = generationID, text = suggestion
+        Task { [self] in
+            defer { isApplying = false }
+            do {
+                let replacement = try await selection.replace(with: text)
+                undo.add(label: "Restore selected text") { try await replacement.undo() }
+                if generationID == id { applied = true; error = ""; original = text }
+            } catch { if generationID == id { self.error = error.localizedDescription } }
+        }
     }
-    func cancel() { generationID = UUID(); work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+    func cancel() { indicator.hide(); generationID = UUID(); work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
 }
 
 /// Accept targets the original accessibility element, not whichever app has focus now.
@@ -161,7 +173,41 @@ private final class TextSelectionSnapshot {
         return TextSelectionSnapshot(element: element, pid: application.processIdentifier,
             applicationName: application.localizedName ?? "App", original: text, range: range, fullValue: value)
     }
-    func replace(with text: String) throws -> TextReplacement {
+    var isCurrent: Bool {
+        guard Self.isEditable(element), Self.string(element, kAXValueAttribute) == fullValue,
+              Self.string(element, kAXSelectedTextAttribute) == original,
+              let current = Self.selectedRange(element) else { return false }
+        return current.location == range.location && current.length == range.length
+    }
+
+    /// Accessibility uses global coordinates with a top-left origin; AppKit uses bottom-left.
+    var selectionBounds: CGRect? {
+        var queryRange = range
+        var result: CFTypeRef?
+        var rect = CGRect.zero
+        if let value = AXValueCreate(.cfRange, &queryRange),
+           AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, value, &result) == .success,
+           let result, CFGetTypeID(result) == AXValueGetTypeID() {
+            let bounds = unsafeBitCast(result, to: AXValue.self)
+            if AXValueGetType(bounds) == .cgRect { _ = AXValueGetValue(bounds, .cgRect, &rect) }
+        }
+        if rect.isEmpty {
+            var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+                  AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+                  let positionValue, let sizeValue,
+                  CFGetTypeID(positionValue) == AXValueGetTypeID(), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
+            let position = unsafeBitCast(positionValue, to: AXValue.self), size = unsafeBitCast(sizeValue, to: AXValue.self)
+            var point = CGPoint.zero, dimensions = CGSize.zero
+            guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize,
+                  AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &dimensions) else { return nil }
+            rect = CGRect(origin: point, size: dimensions)
+        }
+        guard !rect.isEmpty, let primary = NSScreen.screens.first else { return nil }
+        return CGRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    func replace(with text: String) async throws -> TextReplacement {
         guard Self.isEditable(element), !text.isEmpty, text.utf16.count <= 40_000, Self.string(element, kAXSelectedTextAttribute) == original,
               let currentRange = Self.selectedRange(element), currentRange.location == range.location, currentRange.length == range.length else {
             throw ToolError.failed("The selection changed. Select the text again before accepting.")
@@ -176,6 +222,15 @@ private final class TextSelectionSnapshot {
         }
         if settable.boolValue {
             guard AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success else { throw ToolError.failed("This app couldn't replace the selection.") }
+            if !(await Self.waitForValue(expected, element: element)) {
+                // Some browser fields report success but ignore AXSelectedText. A full-value
+                // retry is safe only while both the original value and selection still match.
+                guard isCurrent else { throw ToolError.failed("The app didn't confirm the replacement. Check the original field before trying again.") }
+                AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
+                guard settable.boolValue, AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, expected as CFString) == .success else {
+                    throw ToolError.failed("This app couldn't replace the selection. Copy the suggestion instead.")
+                }
+            }
         } else {
             AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
             guard settable.boolValue else {
@@ -183,10 +238,19 @@ private final class TextSelectionSnapshot {
             }
             guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, expected as CFString) == .success else { throw ToolError.failed("The app rejected the text change.") }
         }
-        if Self.string(element, kAXValueAttribute) != expected {
+        if !(await Self.waitForValue(expected, element: element)) {
             throw ToolError.failed("The app didn't confirm the replacement. Check the original field before trying again.")
         }
         return TextReplacement(element: element, before: previous, after: expected, original: original, replacement: text, range: range)
+    }
+    /// Cross-process accessibility writes can complete after the setter returns. Yield to
+    /// the run loop while checking readback; never claim success from the setter alone.
+    static func waitForValue(_ expected: String, element: AXUIElement) async -> Bool {
+        for delay in [0, 30, 60, 120, 240, 300] {
+            if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+            if string(element, kAXValueAttribute) == expected { return true }
+        }
+        return false
     }
     static func validRange(_ range: CFRange, value: String) -> Bool {
         range.location >= 0 && range.length > 0 && range.location <= value.utf16.count && range.length <= value.utf16.count - range.location
@@ -231,14 +295,14 @@ private final class TextReplacement {
     init(element: AXUIElement, before: String?, after: String?, original: String, replacement: String, range: CFRange) {
         self.element = element; self.before = before; self.after = after; self.original = original; self.replacement = replacement; self.range = range
     }
-    func undo() throws -> String {
+    func undo() async throws -> String {
         guard let before, let after, TextSelectionSnapshot.string(element, kAXValueAttribute) == after else {
             throw ToolError.failed("The field changed after the rewrite; undo was stopped.")
         }
         var settable = DarwinBoolean(false)
         AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
         guard settable.boolValue, AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, before as CFString) == .success,
-              TextSelectionSnapshot.string(element, kAXValueAttribute) == before else { throw ToolError.failed("This app couldn't restore the previous text.") }
+              await TextSelectionSnapshot.waitForValue(before, element: element) else { throw ToolError.failed("This app couldn't restore the previous text.") }
         return "Restored the text before IVY's rewrite."
     }
 }

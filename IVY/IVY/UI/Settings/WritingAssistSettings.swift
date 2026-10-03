@@ -11,10 +11,10 @@ struct WritingAssistSettings: View {
         Form {
             Section("Write with IVY") {
                 Toggle("Enable writing assistant", isOn: $enabled)
-                Toggle("Offer rewriting when I select text in an editable field", isOn: $automatic).disabled(!enabled)
+                Toggle("Show a green button beside selected editable text", isOn: $automatic).disabled(!enabled)
                 Text("Only editable text fields are eligible. Read-only text, webpage articles and password fields are excluded. IVY previews Improve, Rephrase, Shorten, tone changes and Translate in the notch; Accept replaces the selection only if the field and selection still match.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Select text you are editing, then press ⌃⌥W or choose Writing Assistant from the IVY menu. Accessibility permission is required.")
+                Text("Select text you are editing, then click the small green button beside it to open the notch. Selection alone never opens the writing assistant. You can also press ⌃⌥W or choose Writing Assistant from the IVY menu. Accessibility permission is required.")
                     .font(.callout)
                 Button("Accessibility settings") { env.permissions.open(.accessibility) }
             }

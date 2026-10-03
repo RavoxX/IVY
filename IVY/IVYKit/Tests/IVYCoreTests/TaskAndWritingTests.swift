@@ -4,6 +4,21 @@ import Testing
 
 @Suite("Task models and editable writing")
 struct TaskAndWritingTests {
+    @Test("Writing button stays beside the selection and within display edges")
+    func indicatorPlacement() throws {
+        let screen = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        let centered = try #require(WritingIndicatorPlacement.frame(selection: CGRect(x: 200, y: 300, width: 300, height: 40), visibleScreen: screen))
+        #expect(centered.maxX < 200)
+        #expect(centered.size == WritingIndicatorPlacement.size)
+        let leftEdge = try #require(WritingIndicatorPlacement.frame(selection: CGRect(x: 0, y: 690, width: 100, height: 30), visibleScreen: screen))
+        #expect(leftEdge.minX > 100)
+        #expect(screen.contains(leftEdge))
+        let negativeScreen = CGRect(x: -1440, y: -400, width: 1440, height: 900)
+        let lowerEdge = try #require(WritingIndicatorPlacement.frame(selection: CGRect(x: -20, y: -410, width: 100, height: 20), visibleScreen: negativeScreen))
+        #expect(negativeScreen.contains(lowerEdge))
+        #expect(WritingIndicatorPlacement.frame(selection: .zero, visibleScreen: screen) == nil)
+        #expect(WritingIndicatorPlacement.frame(selection: CGRect(x: 1, y: 1, width: 20, height: 20), visibleScreen: .zero) == nil)
+    }
     @Test("Fast web research uses the selected research model without loading an unavailable command model")
     func independentResearchModel() async {
         let commandModel = UnavailableCommandModel()

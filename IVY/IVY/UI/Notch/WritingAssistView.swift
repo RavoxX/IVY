@@ -33,14 +33,14 @@ struct WritingAssistView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .tint(service.action == action ? Color.green : Color.gray)
-                                .disabled(service.isWorking)
+                                .disabled(service.isWorking || service.isApplying)
                             }
                             Menu {
                                 ForEach([WritingAction.professional, .friendly]) { action in
                                     Button(action.title) { service.action = action; service.generate() }
                                 }
                             } label: { Image(systemName: "ellipsis") }
-                            .disabled(service.isWorking)
+                            .disabled(service.isWorking || service.isApplying)
                         }.controlSize(.small)
                         if service.suggestion.isEmpty && !service.isWorking {
                             Text(service.original).foregroundStyle(.white.opacity(0.8)).lineLimit(6)
@@ -56,7 +56,10 @@ struct WritingAssistView: View {
                                 .padding(12)
                                 .background(.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
                             HStack {
-                                if service.isWorking {
+                                if service.isApplying {
+                                    ProgressView().controlSize(.small)
+                                    Text("Replacing selected text…").font(.caption)
+                                } else if service.isWorking {
                                     ProgressView().controlSize(.small)
                                     Text("Writing with " + service.activeModelLabel).font(.caption).lineLimit(1)
                                     Spacer()

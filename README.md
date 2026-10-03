@@ -32,6 +32,8 @@
 
 > IVY is an independent open-source project and is not affiliated with Apple, Spotify or Anthropic.
 
+The expanded notch stays black through its upper 80% and gradually becomes more transparent only at the bottom; text and controls remain fully visible.
+
 ## Screenshots
 
 <p align="center">
@@ -161,7 +163,7 @@ The shortcut, hold time and text-mode window are configurable in **Settings ▸ 
 
 ## Writing assistant
 
-Select text in an **editable text field** in another app. With Accessibility permission, IVY offers rewriting automatically; control this in **Settings ▸ Writing Assistant**. Press **⌃⌥W** or choose **Writing Assistant** in the IVY menu to invoke it manually.
+Select text in an **editable text field** in another app. With Accessibility permission, a small green chevron button appears beside the selection (or field when selection bounds aren't available). **Click it to open the writing assistant in the notch**; selection alone never opens it or makes an AI request. The button disappears when the selection is cleared, the app changes, or the field isn't eligible. Control the button in **Settings ▸ Writing Assistant**. Press **⌃⌥W** or choose **Writing Assistant** in the IVY menu to invoke it manually.
 
 Improve grammar/clarity, Rephrase, Shorten, Professional, Friendly and Translate preview their suggestions inside the notch. Choose the translation language in settings. Selecting text alone makes no model request; choose an action first. **Accept** rechecks the original field, full value and selected range, then verifies the replacement. Changed, disabled, read-only and password fields are rejected. Cancelled or incomplete suggestions cannot be accepted. Apps without compatible Accessibility editing must use Copy instead. **Undo latest action** can restore an unchanged field within the current session.
 

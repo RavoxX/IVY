@@ -138,7 +138,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// Generating or running a tool (models must not be unloaded under it).
-    var isBusy: Bool { env.writingAssist.isWorking || (mode == .assistant && (phase.isBusy || phase == .confirming)) }
+    var isBusy: Bool { env.writingAssist.isWorking || env.writingAssist.isApplying || (mode == .assistant && (phase.isBusy || phase == .confirming)) }
 
     /// Sleep / Do Not Disturb Focus with "stay quiet" on: no sounds, no spoken answers.
     var isQuietFocus: Bool {

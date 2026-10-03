@@ -101,7 +101,9 @@ final class AppEnvironment {
             })
         notch = NotchViewModel(env: self)
         writingAssist.onPresent = { [weak self] in self?.notch.presentWritingAssist() }
-        writingAssist.canPresentAutomatically = { [weak self] in self?.notch.isBusy == false && self?.notch.workspaceVisible == false }
+        writingAssist.canPresentAutomatically = { [weak self] in
+            self?.notch.isBusy == false && self?.notch.workspaceVisible == false && self?.notch.writingAssistVisible == false
+        }
         Task { await agent.setConversationLifetime(minutes: settings.int(.conversationMinutes)) }
 
         runtime.unloadBeforeDelete = { [llm, writerLLM, taskModels, whisper, tts] kind in
