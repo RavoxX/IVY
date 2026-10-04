@@ -13,7 +13,7 @@
 - 🗣️ **Local TTS** — Kokoro-82M via MLX (`mlx-audio`). Off by default.
 - ✅ **Reminders** — read, create and complete Apple Reminders through EventKit.
 - 🎵 **Spotify** — play songs, pause, skip, volume and a now-playing card.
-- 🚀 **Apps, files, URLs, browser** — open apps, folders and websites, or run a Google search in Chrome/Safari.
+- 🚀 **Apps, files, URLs, browser** — open apps, force quit a named app with confirmation, open folders and websites, or run a Google search in Chrome/Safari.
 - 🌐 **Web search** — when IVY doesn't know something or it needs current info, it searches in the background and answers from the results (with sources).
 - ⏱️ **Timers & alarms** — countdown in the closed notch and an alert when time's up.
 - 🌤️ **Weather, calendar, system** — forecast (Open-Meteo), today's events and new events (EventKit), volume/mute, dark mode, battery, disk space, math.
@@ -159,6 +159,7 @@ Try:
 - “Remind me tomorrow at 5 to call Alex.”
 - “Play Billie Jean.” · “Pause the music.” · “Next song.” · “What's playing?”
 - “Open Safari.” · “Open Downloads.” · “Open github.com.”
+- “Close Epic Games Launcher.” · “Force quit Safari.” · “Beende Chrome.” — confirms before force quitting; unsaved changes may be lost. IVY checks that the named app has exited before reporting success.
 - “Open IVY settings.”
 - “Open Claude Code.” · “Open Claude Code and start building a personal website.”
 - “Set a timer for 10 minutes.” · “Wake me up at 7.” · “How much time is left?”
@@ -337,7 +338,7 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 | --- | --- | --- |
 | Low | read reminders/calendar/mail, file search, clipboard, dictionary, battery, now playing, open app/URL, browser/web search, timers, volume, pause, settings | runs immediately |
 | Medium | create/complete reminder, create calendar event, run a shortcut, switch Focus (new shortcuts need your click in Shortcuts), Low Power Mode (macOS asks for your password), start a coding session, dark mode | runs immediately |
-| High | connector tools, calendar edits, Undo, Trash, maintenance commands, shortcuts that unlock/open/pay/send | **explicit confirmation card** |
+| High | force quit app, connector tools, calendar edits, Undo, Trash, maintenance commands, shortcuts that unlock/open/pay/send | **explicit confirmation card** |
 
 - No tool accepts free-form shell, AppleScript or terminal input.
 - Commands come from a fixed allowlist (`CommandAllowlist`); the model can only choose an ID.

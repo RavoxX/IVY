@@ -11,6 +11,7 @@ public enum ToolName {
     public static let musicNowPlaying = "music_now_playing"
     public static let musicVolume = "music_volume"
     public static let openApp = "open_app"
+    public static let closeApp = "close_app"
     public static let openURL = "open_url"
     public static let openFile = "open_file"
     public static let revealInFinder = "reveal_in_finder"

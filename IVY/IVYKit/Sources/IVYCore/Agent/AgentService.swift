@@ -543,6 +543,8 @@ public enum SystemPrompt {
     "tomorrow at 5pm") unless they gave an exact date.
     Never say you did something (opened, played, set, searched, created…) unless a tool \
     result in this conversation confirms it. If no tool fits, say briefly that you can't do it yet.
+    Use close_app when the user asks to close, quit or kill a named application. It force quits \
+    the app after confirmation and may discard unsaved changes; it does not close tabs or windows.
     Use timer_set for timers and alarms (not reminders). Use browser_search when the user wants \
     a search or page shown in a browser. Use calendar_create to put events in the calendar and \
     reminders_create for to-dos. Use file_search to find files, clipboard for anything about \

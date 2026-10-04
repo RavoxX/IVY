@@ -94,6 +94,7 @@ public actor HistoryStore {
         case ToolName.musicPlay?, ToolName.musicControl?, ToolName.musicNowPlaying?, ToolName.musicVolume?:
             return "Spotify Music Playback"
         case ToolName.openApp?: return "Open Application"
+        case ToolName.closeApp?: return "Force Quit Application"
         case ToolName.openURL?: return "Open Website"
         case ToolName.openFile?, ToolName.revealInFinder?: return "Open in Finder"
         case ToolName.openSettings?: return "IVY Settings"

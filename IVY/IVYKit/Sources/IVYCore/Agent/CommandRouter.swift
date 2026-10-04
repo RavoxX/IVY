@@ -59,6 +59,7 @@ public struct CommandRouter: Sendable {
         if let call = routeMusic(text) { return call }
         if let call = routeReminders(text, original: input) { return call }
         if let call = routeCodingSession(text, original: input) { return call }
+        if let call = routeClose(text) { return call }
         if let call = routeOpen(text, original: input) { return call }
         return nil
     }
@@ -264,6 +265,17 @@ public struct CommandRouter: Sendable {
     }
 
     // MARK: - Open apps / URLs / folders
+
+    private func routeClose(_ text: String) -> ToolCall? {
+        guard let target = capture(text, #"^(close|quit|force quit|force-quit|kill|terminate|exit|schließe|schliesse|schließ|schliess|beende|schließen|schliessen)( the| die| das)? (.+)$"#, group: 3),
+              !target.contains(" and "), !target.contains(" then "), !target.contains(" und "),
+              !matches(target, #"\b(tabs?|windows?|fenster|process|processes|prozess|prozesse)\b"#) else { return nil }
+        let appName = target.replacingOccurrences(of: #" (app|application|anwendung)$"#, with: "", options: .regularExpression)
+        guard resolveApp(appName) != nil else { return nil }
+        // Keep the user's target: installed-app fuzzy matching must not select a
+        // different running app. The closing tool requires a unique running match.
+        return ToolCall(name: ToolName.closeApp, arguments: ["name": .string(appName)])
+    }
 
     private func routeOpen(_ text: String, original: String) -> ToolCall? {
         guard let target = capture(text, #"^(open|launch|start|show|go to|take me to)( up)? (.+)$"#, group: 3) else {

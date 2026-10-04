@@ -166,6 +166,7 @@ final class AppEnvironment {
             MusicNowPlayingTool(context: musicContext),
             MusicVolumeTool(context: musicContext),
             OpenApplicationTool(launcher: appLauncher),
+            CloseApplicationTool(),
             OpenURLTool(launcher: appLauncher),
             BrowserSearchTool(launcher: appLauncher),
             WebSearchTool(settings: settings),

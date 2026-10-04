@@ -381,6 +381,7 @@ struct HistoryRow: View {
         case let name? where name.hasPrefix("music"): return "music.note"
         case ToolName.startCodingSession?: return "sparkle"
         case ToolName.openApp?: return "app.badge"
+        case ToolName.closeApp?: return "xmark.app"
         case ToolName.openURL?: return "globe"
         case ToolName.openFile?, ToolName.revealInFinder?: return "folder"
         case ToolName.openSettings?: return "gearshape"
