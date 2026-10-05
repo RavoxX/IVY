@@ -1,17 +1,59 @@
 import AppKit
+import ApplicationServices
 import IVYCore
 
 /// Word exposes its document canvas as AXLayoutArea, rather than an editable AX
-/// text field. Use Word's scripting dictionary for explicit writing requests.
+/// text field. Use Word's scripting dictionary for selection reads and writing.
 /// Scripts are fixed; document text and model output travel only as event data.
 @MainActor
 final class WordSelectionSnapshot: WritingSelection {
     static let bundleID = "com.microsoft.Word"
     let applicationName = "Microsoft Word"
     var original: String { state.original }
+    var signature: WordWritingSelection { state }
     private let pid: pid_t
     private let state: WordWritingSelection
     private let descriptor: NSAppleEventDescriptor
+
+    /// Prefer Word's accessible range geometry where available. Otherwise use the
+    /// focused document canvas and a pointer anchor; ribbon/search fields don't
+    /// qualify even if Word retains a selection in its document behind them.
+    var selectionBounds: CGRect? {
+        guard let element = focusedDocumentElement(), let field = WritingAccessibilityBounds.visibleField(element: element) else { return nil }
+        if let hovered = hoverBounds(element: element, field: field, pointer: NSEvent.mouseLocation) { return hovered }
+        let range = CFRange(location: state.location, length: state.length)
+        if let bounds = WritingAccessibilityBounds.selection(element: element, range: range) {
+            let visible = bounds.intersection(field)
+            if !visible.isNull && !visible.isEmpty { return visible }
+        }
+        return WritingIndicatorPlacement.fallbackAnchor(field: field, pointer: NSEvent.mouseLocation)
+    }
+
+    func hoverBounds(at pointer: CGPoint) -> CGRect? {
+        guard let element = focusedDocumentElement(), let field = WritingAccessibilityBounds.visibleField(element: element) else { return nil }
+        return hoverBounds(element: element, field: field, pointer: pointer)
+    }
+
+    private func hoverBounds(element: AXUIElement, field: CGRect, pointer: CGPoint) -> CGRect? {
+        guard field.contains(pointer) else { return nil }
+        if let line = WritingAccessibilityBounds.line(element: element, pointer: pointer) {
+            let visible = line.intersection(field)
+            if !visible.isNull && !visible.isEmpty { return visible }
+        }
+        return WritingIndicatorPlacement.fallbackAnchor(field: field, pointer: pointer)
+    }
+
+    private func focusedDocumentElement() -> AXUIElement? {
+        let application = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let element = unsafeBitCast(focused, to: AXUIElement.self)
+        var role: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+              let role = role as? String, ["AXLayoutArea", "AXTextArea"].contains(role) else { return nil }
+        return element
+    }
 
     private init(pid: pid_t, state: WordWritingSelection, descriptor: NSAppleEventDescriptor) {
         self.pid = pid; self.state = state; self.descriptor = descriptor

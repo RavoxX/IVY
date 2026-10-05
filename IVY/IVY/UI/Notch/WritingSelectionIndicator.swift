@@ -42,6 +42,8 @@ final class WritingSelectionIndicator: NSObject {
     func hide() { panel.orderOut(nil); onClick = nil }
     /// Polling must not remove the panel between its own mouse-down and mouse-up.
     var isHandlingClick: Bool { (panel.contentView as? IndicatorButton)?.isTrackingClick == true }
+    var isVisible: Bool { panel.isVisible }
+    var isPointerInside: Bool { panel.isVisible && panel.frame.contains(NSEvent.mouseLocation) }
     @objc private func clicked() {
         let action = onClick; hide(); action?()
     }

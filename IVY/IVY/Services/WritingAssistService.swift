@@ -43,7 +43,12 @@ final class WritingAssistService: ObservableObject {
     private var selectionTimer: Timer?
     private var selectionMonitor: Any?
     private var selectionCheck: DispatchWorkItem?
-    private var selectionSettler = WritingSelectionSettler<WritingSelectionSignature>()
+    private var selectionSettler = WritingSelectionSettler<AutomaticWritingSelectionSignature>()
+    private var wordPollGate = WritingSelectionPollGate()
+    private var wordPollTask: Task<Void, Never>?
+    private var wordHoverCheck: DispatchWorkItem?
+    private var wordIndicatorSelection: WordSelectionSnapshot?
+    private var wordIndicatorAnchor: (signature: AutomaticWritingSelectionSignature, bounds: CGRect)?
     private var defaultsObserver: NSObjectProtocol?
     private let indicator = WritingSelectionIndicator()
 
@@ -75,12 +80,14 @@ final class WritingAssistService: ObservableObject {
         resetAutomaticSelection()
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused) else { cancel(); return }
         guard settings.bool(.writingAssistOnSelection), AXIsProcessTrusted() else { return }
-        selectionMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+        selectionMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown, .keyUp, .flagsChanged, .scrollWheel, .mouseMoved]) { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 switch event.type {
-                case .leftMouseDown, .leftMouseDragged, .keyDown:
+                case .leftMouseDown, .leftMouseDragged, .keyDown, .scrollWheel:
                     self.resetAutomaticSelection()
+                case .mouseMoved:
+                    self.scheduleWordHover()
                 default:
                     self.pollSelection()
                 }
@@ -98,16 +105,14 @@ final class WritingAssistService: ObservableObject {
         guard NSEvent.pressedMouseButtons & 1 == 0, !NSEvent.modifierFlags.contains(.shift) else {
             resetAutomaticSelection(); return
         }
-        guard !isWorking, !isApplying, canPresentAutomatically?() != false,
-              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier,
-              let captured = try? TextSelectionSnapshot.capture(), let bounds = captured.selectionBounds else { resetAutomaticSelection(); return }
-        guard selectionSettler.shouldShow(selection: captured.signature, isSelecting: false, at: ProcessInfo.processInfo.systemUptime) else {
-            indicator.hide()
-            let check = DispatchWorkItem { [weak self] in self?.pollSelection() }
-            selectionCheck = check
-            DispatchQueue.main.asyncAfter(deadline: .now() + selectionSettler.delay, execute: check)
+        guard allowsAutomaticSelection, let application = NSWorkspace.shared.frontmostApplication else { resetAutomaticSelection(); return }
+        if application.bundleIdentifier == WordSelectionSnapshot.bundleID {
+            pollWordSelection(application: application)
             return
         }
+        wordPollGate.invalidate(); wordPollTask?.cancel(); wordIndicatorAnchor = nil; wordIndicatorSelection = nil
+        guard let captured = try? TextSelectionSnapshot.capture(application: application), let bounds = captured.selectionBounds else { resetAutomaticSelection(); return }
+        guard selectionHasSettled(.accessibility(captured.signature)) else { return }
         indicator.show(nextTo: bounds) { [weak self] in
             guard let self, self.canPresentAutomatically?() != false, captured.isCurrent,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == captured.pid else { return }
@@ -116,8 +121,86 @@ final class WritingAssistService: ObservableObject {
     }
     private func resetAutomaticSelection() {
         selectionCheck?.cancel(); selectionCheck = nil
+        wordPollGate.invalidate(); wordPollTask?.cancel()
+        wordHoverCheck?.cancel(); wordHoverCheck = nil
+        wordIndicatorSelection = nil
+        wordIndicatorAnchor = nil
         selectionSettler.reset()
         indicator.hide()
+    }
+
+    private var allowsAutomaticSelection: Bool {
+        settings.bool(.writingAssistEnabled) && settings.bool(.writingAssistOnSelection) && !settings.bool(.paused) &&
+        AXIsProcessTrusted() && !isWorking && !isApplying && captureTask == nil && canPresentAutomatically?() != false &&
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier &&
+        NSEvent.pressedMouseButtons & 1 == 0 && !NSEvent.modifierFlags.contains(.shift)
+    }
+
+    private func selectionHasSettled(_ signature: AutomaticWritingSelectionSignature) -> Bool {
+        guard selectionSettler.shouldShow(selection: signature, isSelecting: false, at: ProcessInfo.processInfo.systemUptime) else {
+            indicator.hide()
+            let check = DispatchWorkItem { [weak self] in self?.pollSelection() }
+            selectionCheck = check
+            DispatchQueue.main.asyncAfter(deadline: .now() + selectionSettler.delay, execute: check)
+            return false
+        }
+        return true
+    }
+
+    private func pollWordSelection(application: NSRunningApplication) {
+        guard let token = wordPollGate.begin() else { return }
+        let bundleID = WordSelectionSnapshot.bundleID
+        wordPollTask = Task { [weak self] in
+            // Never trigger an Automation consent dialog from passive polling.
+            let permission = await Task.detached(priority: .utility) {
+                PermissionService.automationStatus(bundleID: bundleID)
+            }.value
+            var captured: WordSelectionSnapshot?
+            if permission == .granted, !Task.isCancelled {
+                captured = try? await WordSelectionSnapshot.capture(application: application)
+            }
+            guard let self else { return }
+            self.wordPollTask = nil
+            guard self.wordPollGate.finish(token), !Task.isCancelled else { return }
+            guard !self.indicator.isHandlingClick else { return }
+            guard self.allowsAutomaticSelection,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier,
+                  let captured, let bounds = captured.selectionBounds else { self.resetAutomaticSelection(); return }
+            let signature = AutomaticWritingSelectionSignature.word(application.processIdentifier, captured.signature)
+            self.wordIndicatorSelection = captured
+            if self.wordIndicatorAnchor?.signature != signature { self.wordIndicatorAnchor = (signature, bounds) }
+            guard self.selectionHasSettled(signature), let anchor = self.wordIndicatorAnchor else { return }
+            self.indicator.show(nextTo: anchor.bounds) { [weak self] in
+                guard let self, self.allowsAutomaticSelection,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier else { return }
+                // A click captures again through the same Word path as the menu.
+                // Only that fresh snapshot is used for preview and Accept checks.
+                self.prepare(application: application)
+            }
+        }
+    }
+
+    /// Move only after the pointer settles over the document, so the button stays
+    /// still while the user crosses the gap to click it. No Word script or model
+    /// request is needed to update an already captured selection's geometry.
+    private func scheduleWordHover() {
+        wordHoverCheck?.cancel(); wordHoverCheck = nil
+        guard wordIndicatorSelection != nil, indicator.isVisible else { return }
+        let check = DispatchWorkItem { [weak self] in
+            guard let self, self.allowsAutomaticSelection, !self.indicator.isHandlingClick, !self.indicator.isPointerInside,
+                  self.indicator.isVisible, NSWorkspace.shared.frontmostApplication?.bundleIdentifier == WordSelectionSnapshot.bundleID,
+                  let selection = self.wordIndicatorSelection, let bounds = selection.hoverBounds(at: NSEvent.mouseLocation),
+                  let anchor = self.wordIndicatorAnchor else { return }
+            self.wordIndicatorAnchor = (anchor.signature, bounds)
+            self.indicator.show(nextTo: bounds) { [weak self] in
+                guard let self, self.allowsAutomaticSelection,
+                      let application = NSWorkspace.shared.frontmostApplication,
+                      application.bundleIdentifier == WordSelectionSnapshot.bundleID else { return }
+                self.prepare(application: application)
+            }
+        }
+        wordHoverCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: check)
     }
     func prepare(application: NSRunningApplication? = nil) {
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused), !isApplying else { return }
@@ -132,6 +215,7 @@ final class WritingAssistService: ObservableObject {
                     self.prepare(snapshot: snapshot)
                 } catch {
                     guard let self, self.generationID == id, !Task.isCancelled else { return }
+                    self.captureTask = nil
                     self.error = error.localizedDescription; self.onPresent?()
                 }
             }
@@ -193,6 +277,11 @@ final class WritingAssistService: ObservableObject {
         }
     }
     func cancel() { resetAutomaticSelection(); generationID = UUID(); captureTask?.cancel(); captureTask = nil; work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+}
+
+private enum AutomaticWritingSelectionSignature: Equatable {
+    case accessibility(WritingSelectionSignature)
+    case word(pid_t, WordWritingSelection)
 }
 
 @MainActor
@@ -263,31 +352,8 @@ private final class TextSelectionSnapshot: WritingSelection {
         return current.location == range.location && current.length == range.length
     }
 
-    /// Accessibility uses global coordinates with a top-left origin; AppKit uses bottom-left.
     var selectionBounds: CGRect? {
-        var queryRange = range
-        var result: CFTypeRef?
-        var rect = CGRect.zero
-        if let value = AXValueCreate(.cfRange, &queryRange),
-           AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, value, &result) == .success,
-           let result, CFGetTypeID(result) == AXValueGetTypeID() {
-            let bounds = unsafeBitCast(result, to: AXValue.self)
-            if AXValueGetType(bounds) == .cgRect { _ = AXValueGetValue(bounds, .cgRect, &rect) }
-        }
-        if rect.isEmpty {
-            var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
-                  AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
-                  let positionValue, let sizeValue,
-                  CFGetTypeID(positionValue) == AXValueGetTypeID(), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
-            let position = unsafeBitCast(positionValue, to: AXValue.self), size = unsafeBitCast(sizeValue, to: AXValue.self)
-            var point = CGPoint.zero, dimensions = CGSize.zero
-            guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize,
-                  AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &dimensions) else { return nil }
-            rect = CGRect(origin: point, size: dimensions)
-        }
-        guard !rect.isEmpty, let primary = NSScreen.screens.first else { return nil }
-        return CGRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        WritingAccessibilityBounds.selection(element: element, range: range) ?? WritingAccessibilityBounds.field(element: element)
     }
 
     func replace(with text: String) async throws -> any WritingReplacement {

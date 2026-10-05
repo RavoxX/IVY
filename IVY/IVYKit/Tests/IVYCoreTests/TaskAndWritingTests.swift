@@ -4,6 +4,37 @@ import Testing
 
 @Suite("Task models and editable writing")
 struct TaskAndWritingTests {
+    @Test("Cancelled asynchronous selection reads cannot re-show the writing button or queue overlapping reads")
+    func asynchronousSelectionReads() throws {
+        var gate = WritingSelectionPollGate()
+        func begin() -> WritingSelectionPollGate.Token? { gate.begin() }
+        func finish(_ token: WritingSelectionPollGate.Token) -> Bool { gate.finish(token) }
+        let first = try #require(begin())
+        #expect(begin() == nil)
+        gate.invalidate()
+        #expect(begin() == nil)
+        #expect(!finish(first))
+        let second = try #require(begin())
+        #expect(!finish(first))
+        #expect(begin() == nil)
+        #expect(finish(second))
+        #expect(!finish(second))
+        #expect(begin() != nil)
+    }
+
+    @Test("Document canvas fallback anchors use the pointer or keyboard corner across displays")
+    func documentAnchor() throws {
+        let field = CGRect(x: -1200, y: 100, width: 800, height: 600)
+        let mouseAnchor = try #require(WritingIndicatorPlacement.fallbackAnchor(field: field, pointer: CGPoint(x: -700, y: 400)))
+        #expect(field.contains(mouseAnchor))
+        #expect(mouseAnchor.origin == CGPoint(x: -700, y: 400))
+        let keyboardAnchor = try #require(WritingIndicatorPlacement.fallbackAnchor(field: field, pointer: CGPoint(x: 100, y: 400)))
+        #expect(field.contains(keyboardAnchor))
+        #expect(keyboardAnchor.minX < field.midX && keyboardAnchor.minY > field.midY)
+        #expect(WritingIndicatorPlacement.fallbackAnchor(field: .zero, pointer: .zero) == nil)
+        #expect(WritingIndicatorPlacement.fallbackAnchor(field: field, pointer: CGPoint(x: CGFloat.infinity, y: 0)) == nil)
+    }
+
     @Test("Writing button stays beside the selection and within display edges")
     func indicatorPlacement() throws {
         let screen = CGRect(x: 0, y: 0, width: 1000, height: 700)
