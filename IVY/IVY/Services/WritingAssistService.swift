@@ -35,7 +35,8 @@ final class WritingAssistService: ObservableObject {
     private let textService: LLMTextService
     private let settings: SettingsStore
     private let undo: UndoStore
-    private var selection: TextSelectionSnapshot?
+    private var selection: (any WritingSelection)?
+    private var captureTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
     private var generationID = UUID()
     private var keyMonitor: Any?
@@ -120,10 +121,26 @@ final class WritingAssistService: ObservableObject {
     }
     func prepare(application: NSRunningApplication? = nil) {
         guard settings.bool(.writingAssistEnabled), !settings.bool(.paused), !isApplying else { return }
-        do { prepare(snapshot: try TextSelectionSnapshot.capture(application: application)) }
-        catch { original = ""; suggestion = ""; self.error = error.localizedDescription; onPresent?() }
+        cancel(); selection = nil; original = ""; suggestion = ""; error = ""; applied = false; sourceName = ""
+        let application = application ?? NSWorkspace.shared.frontmostApplication
+        if application?.bundleIdentifier == WordSelectionSnapshot.bundleID, let application {
+            let id = generationID
+            captureTask = Task { [weak self] in
+                do {
+                    let snapshot = try await WordSelectionSnapshot.capture(application: application)
+                    guard let self, self.generationID == id, !Task.isCancelled else { return }
+                    self.prepare(snapshot: snapshot)
+                } catch {
+                    guard let self, self.generationID == id, !Task.isCancelled else { return }
+                    self.error = error.localizedDescription; self.onPresent?()
+                }
+            }
+        } else {
+            do { prepare(snapshot: try TextSelectionSnapshot.capture(application: application)) }
+            catch { self.error = error.localizedDescription; onPresent?() }
+        }
     }
-    private func prepare(snapshot: TextSelectionSnapshot) {
+    private func prepare(snapshot: any WritingSelection) {
         indicator.hide()
         cancel(); selection = snapshot; original = snapshot.original
         sourceName = snapshot.applicationName; suggestion = ""; error = ""; applied = false
@@ -175,7 +192,19 @@ final class WritingAssistService: ObservableObject {
             } catch { if generationID == id { self.error = error.localizedDescription } }
         }
     }
-    func cancel() { resetAutomaticSelection(); generationID = UUID(); work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+    func cancel() { resetAutomaticSelection(); generationID = UUID(); captureTask?.cancel(); captureTask = nil; work?.cancel(); work = nil; isWorking = false; readyToAccept = false }
+}
+
+@MainActor
+protocol WritingSelection {
+    var original: String { get }
+    var applicationName: String { get }
+    func replace(with text: String) async throws -> any WritingReplacement
+}
+
+@MainActor
+protocol WritingReplacement {
+    func undo() async throws -> String
 }
 
 /// Includes the accessibility element so identical selections in different fields
@@ -197,7 +226,7 @@ private struct WritingSelectionSignature: Equatable {
 /// Accept targets the original accessibility element, not whichever app has focus now.
 /// A changed range or original value aborts the edit. No pasteboard or synthetic keystrokes.
 @MainActor
-private final class TextSelectionSnapshot {
+private final class TextSelectionSnapshot: WritingSelection {
     let element: AXUIElement
     let pid: pid_t
     let applicationName: String
@@ -261,7 +290,7 @@ private final class TextSelectionSnapshot {
         return CGRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
     }
 
-    func replace(with text: String) async throws -> TextReplacement {
+    func replace(with text: String) async throws -> any WritingReplacement {
         guard Self.isEditable(element), !text.isEmpty, text.utf16.count <= 40_000, Self.string(element, kAXSelectedTextAttribute) == original,
               let currentRange = Self.selectedRange(element), currentRange.location == range.location, currentRange.length == range.length else {
             throw ToolError.failed("The selection changed. Select the text again before accepting.")
@@ -339,7 +368,7 @@ private final class TextSelectionSnapshot {
     }
 }
 @MainActor
-private final class TextReplacement {
+private final class TextReplacement: WritingReplacement {
     let element: AXUIElement
     let before: String?
     let after: String?

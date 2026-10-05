@@ -1,10 +1,11 @@
 import os
 import AppKit
+import Carbon
 import IVYCore
 
 /// Runs fixed AppleScript templates on a dedicated serial queue (never the main thread).
-/// Model output is never interpolated into scripts; the only dynamic values are
-/// validated Spotify URIs and integers.
+/// Model output is never interpolated into scripts. Dynamic source values are
+/// validated Spotify URIs and integers; text is passed as typed handler arguments.
 final class AppleScriptRunner: @unchecked Sendable {
     static let shared = AppleScriptRunner()
     private let queue = DispatchQueue(label: "com.ravoxx.IVY.applescript", qos: .userInitiated)
@@ -18,11 +19,35 @@ final class AppleScriptRunner: @unchecked Sendable {
     }
 
     func run(_ source: String) async throws -> NSAppleEventDescriptor {
-        try await withCheckedThrowingContinuation { continuation in
+        try await run(source, handler: nil, arguments: [])
+    }
+
+    /// Handler arguments are Apple Event data, never executable script source.
+    func run(_ source: String, handler: String?, arguments: [NSAppleEventDescriptor]) async throws -> NSAppleEventDescriptor {
+        let encodedArguments = arguments.map { ScriptArgument(type: $0.descriptorType, data: $0.data) }
+        return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 var errorInfo: NSDictionary?
                 let script = NSAppleScript(source: source)
-                let result = script?.executeAndReturnError(&errorInfo)
+                let result: NSAppleEventDescriptor?
+                if let handler {
+                    let event = NSAppleEventDescriptor(eventClass: AEEventClass(kASAppleScriptSuite),
+                        eventID: AEEventID(kASSubroutineEvent), targetDescriptor: nil,
+                        returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+                    event.setParam(NSAppleEventDescriptor(string: handler), forKeyword: AEKeyword(keyASSubroutineName))
+                    let parameters = NSAppleEventDescriptor.list()
+                    for (index, argument) in encodedArguments.enumerated() {
+                        guard let descriptor = NSAppleEventDescriptor(descriptorType: argument.type, data: argument.data) else {
+                            continuation.resume(throwing: ScriptError(code: -50, message: "Couldn't encode the script arguments."))
+                            return
+                        }
+                        parameters.insert(descriptor, at: index + 1)
+                    }
+                    event.setParam(parameters, forKeyword: AEKeyword(keyDirectObject))
+                    result = script?.executeAppleEvent(event, error: &errorInfo)
+                } else {
+                    result = script?.executeAndReturnError(&errorInfo)
+                }
                 if let result {
                     continuation.resume(returning: result)
                 } else {
@@ -32,6 +57,12 @@ final class AppleScriptRunner: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Transfer immutable encoded data to the serial queue, not mutable descriptors.
+    private struct ScriptArgument: Sendable {
+        let type: DescType
+        let data: Data?
     }
 }
 

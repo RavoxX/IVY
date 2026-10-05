@@ -7,7 +7,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>IVY controls Spotify playback, checks your Mail inbox (sender, subject and date only) when you ask about email, and, when you ask, the system appearance (dark mode).</string>
+	<string>IVY controls Spotify playback, checks your Mail inbox (sender, subject and date only) when you ask about email, changes the system appearance when asked, and reads selected Word text for writing previews, replacing it only when you accept.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>IVY reads your calendar and creates or edits events when you ask. With cloud AI enabled, requested event details may be sent to your selected provider.</string>
 	<key>NSCalendarsUsageDescription</key>

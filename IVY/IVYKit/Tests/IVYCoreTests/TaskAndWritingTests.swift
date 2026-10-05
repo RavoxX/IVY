@@ -61,6 +61,29 @@ struct TaskAndWritingTests {
         }
         #expect(EditableTextPolicy.replacement(in: "👋 new world", location: 3, length: 4, original: "helo", with: "hello") == nil)
     }
+    @Test("Word selections require a matching document body and valid positions")
+    func wordSelectionValidation() throws {
+        let selection = try #require(WordWritingSelection(documentName: "Document1", fullValue: "👋 helo\rnext\r", original: "helo", start: 3, end: 7))
+        #expect(selection.replacement("hello")?.fullValue == "👋 hello\rnext\r")
+        #expect(WordWritingSelection(documentName: "", fullValue: "text", original: "text", start: 0, end: 4) == nil)
+        #expect(WordWritingSelection(documentName: "Document1", fullValue: "new text", original: "old", start: 0, end: 3) == nil)
+        for (start, end) in [(-1, 4), (4, 3), (0, Int.max), (Int.max, Int.max), (0, 0)] {
+            #expect(WordWritingSelection(documentName: "Document1", fullValue: "text", original: "text", start: start, end: end) == nil)
+        }
+        let tooLong = String(repeating: "a", count: 12_001)
+        #expect(WordWritingSelection(documentName: "Document1", fullValue: tooLong, original: tooLong, start: 0, end: tooLong.count) == nil)
+    }
+    @Test("Word replacements normalize paragraphs and retain the document's final mark")
+    func wordParagraphs() throws {
+        let selection = try #require(WordWritingSelection(documentName: "Document1", fullValue: "before\rselected\r", original: "selected\r", start: 7, end: 16))
+        #expect(selection.replacement("new\r\nparagraph\nlast")?.fullValue == "before\rnew\rparagraph\rlast\r")
+        #expect(selection.replacement("new\r")?.text == "new\r")
+        #expect(selection.replacement("") == nil)
+        #expect(selection.replacement(String(repeating: "a", count: 40_001)) == nil)
+        let middle = try #require(WordWritingSelection(documentName: "Document1", fullValue: "first\rsecond\r", original: "first\r", start: 0, end: 6))
+        #expect(middle.replacement("changed\n")?.fullValue == "changed\rsecond\r")
+        #expect(selection.replacement("\" & do shell script \"whoami\"")?.text == "\" & do shell script \"whoami\"\r")
+    }
     @Test("Task choices persist, inherit commands, and explicitly route to different providers")
     func routing() {
         let store = SettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
