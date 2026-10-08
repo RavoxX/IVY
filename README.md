@@ -176,6 +176,8 @@ Try:
 
 The shortcut, hold time and text-mode window are configurable in **Settings ▸ Shortcuts**.
 
+IVY lives in the notch and menu bar without a Dock icon. While the Settings (or Setup) window is open, IVY shows in the Dock and in <kbd>⌘</kbd><kbd>Tab</kbd> so you can switch back to it, with <kbd>⌘</kbd><kbd>W</kbd> to close and <kbd>⌘</kbd><kbd>M</kbd> to minimize; closing the window returns IVY to the menu bar only.
+
 ## Writing assistant
 
 Select text in an **editable text field** in another app. With Accessibility permission, a slim, muted green chevron button appears beside the selection (or field when selection bounds aren't available), after you release the mouse or finish keyboard selection and the selection settles briefly. It stays hidden while you are dragging or selecting with Shift. **Click it to open the writing assistant in the notch**; selection alone never opens it or makes an AI request. The button disappears when the selection is cleared, the app changes, or the field isn't eligible. Control the button in **Settings ▸ Writing Assistant**. Press **⌃⌥W** or choose **Writing Assistant** in the IVY menu to invoke it manually.

@@ -21,6 +21,14 @@ enum NotchPresentationChecks {
         env.openSettings(section: "general")
         await settle()
         check(!model.workspaceVisible && controller.panel.isVisible, "General settings leave the notch available")
+        check(NSApp.activationPolicy() == .regular, "An open Settings window puts IVY in ⌘-Tab and the Dock")
+        NSApp.windows.first { $0.title == "IVY Settings" }?.performClose(nil)
+        await settle()
+        check(NSApp.activationPolicy() == .accessory, "Closing the last window returns IVY to the menu bar only")
+        env.openSettings(section: "general")
+        await settle()
+        check(NSApp.activationPolicy() == .regular && NSApp.windows.contains { $0.title == "IVY Settings" && $0.isVisible },
+              "Reopening Settings brings the window and the Dock icon back")
 
         model.moveToWorkspace()
         await settle()

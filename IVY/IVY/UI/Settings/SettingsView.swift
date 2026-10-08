@@ -1047,8 +1047,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         env.permissions.refresh()
         env.runtime.refresh()
-        NSApp.activate()
-        window?.makeKeyAndOrderFront(nil)
+        if let window { AppPresence.show(window) }
     }
 
     func windowWillClose(_ notification: Notification) { env.notch.workspaceVisible = false }

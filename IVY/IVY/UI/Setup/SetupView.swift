@@ -169,8 +169,7 @@ final class SetupWindowController {
             window.center()
             self.window = window
         }
-        NSApp.activate()
-        window?.makeKeyAndOrderFront(nil)
+        if let window { AppPresence.show(window) }
     }
 
     private func complete() {

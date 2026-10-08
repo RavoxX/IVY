@@ -2,6 +2,7 @@ import AppKit
 
 /// Accessory apps still need an Edit menu: AppKit routes command-key editing through
 /// menu actions to the focused field editor, including SwiftUI SecureField controls.
+/// The Window menu gives ⌘W/⌘M while IVY is a regular app (see `AppPresence`).
 @MainActor
 enum ApplicationMenu {
     static func install() {
@@ -24,6 +25,15 @@ enum ApplicationMenu {
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         let editItem = main.addItem(withTitle: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = edit
+
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        window.addItem(.separator())
+        window.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let windowItem = main.addItem(withTitle: "Window", action: nil, keyEquivalent: "")
+        windowItem.submenu = window
         NSApplication.shared.mainMenu = main
+        NSApplication.shared.windowsMenu = window
     }
 }
