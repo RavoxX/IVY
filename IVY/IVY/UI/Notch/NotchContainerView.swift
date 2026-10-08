@@ -71,6 +71,31 @@ final class NotchContainerView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    // MARK: Files dropped on the notch
+
+    /// The SwiftUI content registers no drag types, so drags fall through to this view.
+    var dropTarget: NotchDropTarget? {
+        didSet { registerForDraggedTypes(NotchDropTarget.types) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        MainActor.assumeIsolated { dropTarget?.entered(sender, in: self) ?? [] }
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        MainActor.assumeIsolated { dropTarget?.updated(sender, in: self) ?? [] }
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        MainActor.assumeIsolated { dropTarget?.exited() }
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { dropTarget != nil }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        MainActor.assumeIsolated { dropTarget?.perform(sender, in: self) ?? false }
+    }
+
     override func layout() {
         super.layout()
         CATransaction.begin()

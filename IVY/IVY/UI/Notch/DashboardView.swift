@@ -1,7 +1,6 @@
 import AppKit
 import IVYCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Hover dashboard (inspired by boring.notch): tabs + status in the menu-bar band,
 /// a media player on Home, a drag-and-drop file shelf with AirDrop, and IVY's history.
@@ -24,14 +23,7 @@ struct DashboardView: View {
             .padding(.bottom, 16)
             .frame(maxHeight: .infinity)
         }
-        // Dropping files anywhere on the dashboard adds them to the shelf.
-        .onDrop(of: [.fileURL], isTargeted: $model.isDropTargeted) { providers in
-            loadFileURLs(from: providers) { urls in
-                model.env.shelf.add(urls)
-                model.tab = .shelf
-            }
-            return true
-        }
+        // Files dropped anywhere on the dashboard are handled by `NotchDropTarget` (AppKit).
     }
 }
 
@@ -39,21 +31,35 @@ struct DashboardHeader: View {
     @ObservedObject var model: NotchViewModel
     @AppStorage(SettingsKey.dashboardBatteryHeader.rawValue) private var showBattery = true
     @ObservedObject var battery: BatteryMonitor
+    @Namespace private var tabs
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(DashboardTab.allCases) { tab in
-                Button { model.tab = tab } label: {
-                    Image(systemName: tab.symbol)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(model.tab == tab ? Color.white : Color.white.opacity(0.5))
-                        .frame(width: 38, height: 24)
-                        .background(Capsule().fill(Color.white.opacity(model.tab == tab ? 0.14 : 0)))
-                        .contentShape(Capsule())
+            // Segmented tabs with a selection pill that slides between them.
+            HStack(spacing: 2) {
+                ForEach(DashboardTab.allCases) { tab in
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { model.tab = tab }
+                    } label: {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(model.tab == tab ? Color.white : Color.white.opacity(0.5))
+                            .frame(width: 36, height: 22)
+                            .background {
+                                if model.tab == tab {
+                                    Capsule().fill(Color.white.opacity(0.18))
+                                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                                        .matchedGeometryEffect(id: "selection", in: tabs)
+                                }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tab.label)
                 }
-                .buttonStyle(.plain)
-                .help(tab.label)
             }
+            .padding(2)
+            .background(Capsule().fill(Color.white.opacity(0.06)))
             Spacer()
             if showBattery, let reading = battery.reading {
                 HStack(spacing: 5) {
@@ -236,46 +242,69 @@ struct DashboardTileStyle: ButtonStyle {
 struct ShelfView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var shelf: ShelfStore
-    @State private var airDropTargeted = false
+    /// Tiles that fit beside the AirDrop zone; older files collapse into a "+N" tile.
+    private let visibleCount = 4
 
     var body: some View {
         HStack(spacing: 14) {
             // AirDrop target: drop files here to send them with AirDrop.
             VStack(spacing: 8) {
                 ZStack {
-                    Circle().fill(Color.white.opacity(airDropTargeted ? 0.2 : 0.1)).frame(width: 52, height: 52)
+                    Circle().fill(Color.white.opacity(model.isAirDropTargeted ? 0.2 : 0.1)).frame(width: 52, height: 52)
                     Image(systemName: "square.and.arrow.up").font(.system(size: 17)).foregroundStyle(.white.opacity(0.8))
                 }
                 Text("AirDrop").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
             }
             .frame(width: 150)
             .frame(maxHeight: .infinity)
-            .background(DashedPanel(highlighted: airDropTargeted))
-            .onDrop(of: [.fileURL], isTargeted: $airDropTargeted) { providers in
-                loadFileURLs(from: providers) { ShelfStore.airDrop($0) }
-                return true
-            }
+            .background(DashedPanel(highlighted: model.isAirDropTargeted))
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { model.airDropZone = proxy.frame(in: .global) }
+                    .onChange(of: proxy.frame(in: .global)) { _, frame in model.airDropZone = frame }
+                    .onDisappear { model.airDropZone = nil }
+            })
             .onTapGesture { ShelfStore.airDrop(shelf.items) }
             .help("Drop files to AirDrop them, or click to AirDrop everything on the shelf")
 
             Group {
                 if shelf.items.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "tray.and.arrow.down").font(.system(size: 20)).foregroundStyle(.white.opacity(0.6))
-                        Text("Drop files here").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                    VStack(spacing: 6) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.white.opacity(model.isDropTargeted ? 0.9 : 0.5))
+                            .symbolEffect(.bounce, value: model.isDropTargeted)
+                        Text("Drop files here").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+                        Text("They stay here until you drag them out").font(.system(size: 10)).foregroundStyle(.white.opacity(0.35))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    HStack(spacing: 10) {
-                        ForEach(shelf.items.suffix(5), id: \.self) { url in
-                            ShelfItemView(url: url, ask: { model.env.openSettings(section: "assistant"); model.env.workspaceAttachments = [url] }) { shelf.remove(url) }
+                    let items = Array(shelf.items.reversed())
+                    HStack(spacing: 6) {
+                        ForEach(items.prefix(visibleCount), id: \.self) { url in
+                            ShelfItemView(url: url, all: items,
+                                          ask: { model.env.openSettings(section: "assistant"); model.env.workspaceAttachments = [url] },
+                                          remove: { withAnimation(.spring(response: 0.3)) { shelf.remove(url) } })
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                        if items.count > visibleCount {
+                            Button { ShelfQuickLook.shared.show(items, selecting: items[visibleCount]) } label: {
+                                Text("+\(items.count - visibleCount)")
+                                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.white.opacity(0.8))
+                                    .frame(width: 44, height: 44)
+                                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.1)))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Preview all \(items.count) files")
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 8)
                     .frame(maxHeight: .infinity)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: shelf.items)
                     .overlay(alignment: .topTrailing) {
-                        Button("Clear") { shelf.clear() }
+                        Button("Clear") { withAnimation(.easeOut(duration: 0.2)) { shelf.clear() } }
                             .buttonStyle(.plain)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.white.opacity(0.45))
@@ -284,48 +313,93 @@ struct ShelfView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(DashedPanel(highlighted: model.isDropTargeted))
+            .background(DashedPanel(highlighted: model.isDropTargeted, dashed: shelf.items.isEmpty || model.isDropTargeted))
         }
     }
 }
 
+/// One shelf file: Quick Look thumbnail, name and size. Click to preview, double-click to
+/// open, drag out into any app.
 struct ShelfItemView: View {
     let url: URL
+    var all: [URL] = []
     var ask: () -> Void = {}
     let remove: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        VStack(spacing: 4) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable().frame(width: 44, height: 44)
-            Text(url.lastPathComponent)
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.8))
-                .lineLimit(1).truncationMode(.middle)
-                .frame(width: 70)
+        VStack(spacing: 5) {
+            FileThumbnail(url: url, size: 50)
+                .scaleEffect(hovering ? 1.06 : 1)
+            VStack(spacing: 1) {
+                Text(url.lastPathComponent)
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1).truncationMode(.middle)
+                Text(FileDetails.summary(url))
+                    .font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
+                    .lineLimit(1)
+            }
+            .frame(width: 70)
         }
-        .padding(6)
+        .padding(.vertical, 6).padding(.horizontal, 3)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.08 : 0)))
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button(action: remove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 15, height: 15)
+                        .background(Circle().fill(.black.opacity(0.75)).overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5)))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 2, y: -2)
+                .help("Remove from Shelf")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
         .contentShape(Rectangle())
+        .onHover { inside in withAnimation(.easeOut(duration: 0.15)) { hovering = inside } }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(url) }
+        .onTapGesture { ShelfQuickLook.shared.show(all.isEmpty ? [url] : all, selecting: url) }
         // Drag files back out of the shelf into any app.
         .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
         .contextMenu {
-            Button("Ask IVY about this file", action: ask)
+            Button("Quick Look") { ShelfQuickLook.shared.show(all.isEmpty ? [url] : all, selecting: url) }
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            Button("Ask IVY about this file", action: ask)
+            Divider()
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([url as NSURL])
+            }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url.path, forType: .string)
+            }
             Button("AirDrop") { ShelfStore.airDrop([url]) }
             Divider()
             Button("Remove from Shelf", action: remove)
         }
-        .help(url.path)
+        .help("\(url.lastPathComponent)\nClick to preview, double-click to open")
     }
 }
 
 struct DashedPanel: View {
     var highlighted: Bool
+    /// Dashed while it invites a drop; a quiet filled panel once it holds files.
+    var dashed = true
     var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .strokeBorder(Color.white.opacity(highlighted ? 0.55 : 0.2), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-            .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(highlighted ? 0.06 : 0)))
+        if dashed {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(highlighted ? 0.55 : 0.2), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(highlighted ? 0.06 : 0)))
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.04)))
+        }
     }
 }
 
@@ -406,28 +480,4 @@ struct HistoryRow: View {
         default: return .white.opacity(0.6)
         }
     }
-}
-
-/// Extracts file URLs from drag-and-drop item providers.
-func loadFileURLs(from providers: [NSItemProvider], completion: @escaping @MainActor ([URL]) -> Void) {
-    let collector = URLCollector()
-    let group = DispatchGroup()
-    for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-        group.enter()
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            if let url { collector.append(url) }
-            group.leave()
-        }
-    }
-    group.notify(queue: .main) {
-        let urls = collector.urls
-        MainActor.assumeIsolated { completion(urls) }
-    }
-}
-
-private final class URLCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [URL] = []
-    func append(_ url: URL) { lock.withLock { storage.append(url) } }
-    var urls: [URL] { lock.withLock { storage } }
 }

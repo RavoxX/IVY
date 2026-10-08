@@ -84,12 +84,18 @@ final class ShelfStore: ObservableObject {
         defaults.set(items.map(\.path), forKey: key)
     }
 
-    /// Sends files with AirDrop via the system sharing service.
-    static func airDrop(_ urls: [URL]) {
-        guard !urls.isEmpty, let service = NSSharingService(named: .sendViaAirDrop) else { return }
-        if service.canPerform(withItems: urls) {
-            service.perform(withItems: urls)
+    /// Sends files with AirDrop via the system sharing service. IVY is a background app, so
+    /// it activates first; otherwise the AirDrop picker can open behind other windows.
+    /// Returns false when AirDrop can't take the files (callers keep them on the shelf).
+    @MainActor @discardableResult
+    static func airDrop(_ urls: [URL]) -> Bool {
+        guard !urls.isEmpty, let service = NSSharingService(named: .sendViaAirDrop), service.canPerform(withItems: urls) else {
+            Log.ui.error("AirDrop unavailable for the dropped files")
+            return false
         }
+        NSApp.activate(ignoringOtherApps: true)
+        service.perform(withItems: urls)
+        return true
     }
 }
 

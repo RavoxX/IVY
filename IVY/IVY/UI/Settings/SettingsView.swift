@@ -54,6 +54,76 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+extension SettingsSection {
+    /// Tile color in the sidebar, like System Settings.
+    var tint: Color {
+        switch self {
+        case .assistant: return .green
+        case .general: return .gray
+        case .dashboard: return .indigo
+        case .ai: return .purple
+        case .writing: return .teal
+        case .benchmark: return .mint
+        case .usage: return .orange
+        case .connectors: return .blue
+        case .routines: return .yellow
+        case .history: return .brown
+        case .voice: return .pink
+        case .shortcuts: return .cyan
+        case .integrations: return .blue
+        case .faceID: return .green
+        case .privacy: return .blue
+        case .updates: return .gray
+        case .advanced: return .gray
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .assistant: return "Chat with IVY in a full window"
+        case .general: return "Startup, notch and display"
+        case .dashboard: return "What the hover dashboard shows"
+        case .ai: return "Local and cloud models"
+        case .writing: return "Rewrite and translate selected text"
+        case .benchmark: return "Compare models on your Mac"
+        case .usage: return "Requests and tokens by model"
+        case .connectors: return "Bring your apps into IVY"
+        case .routines: return "Run several requests in order"
+        case .history: return "What you asked recently"
+        case .voice: return "Speech recognition and spoken answers"
+        case .shortcuts: return "How you summon IVY"
+        case .integrations: return "Spotify, Claude Code, web and mail"
+        case .faceID: return "Unlock your Mac with your face"
+        case .privacy: return "Permissions and your data"
+        case .updates: return "Keep IVY current"
+        case .advanced: return "Models folder, logs and reset"
+        }
+    }
+
+    /// Sidebar groups.
+    static let groups: [(String, [SettingsSection])] = [
+        ("IVY", [.assistant, .general, .dashboard]),
+        ("Intelligence", [.ai, .writing, .benchmark, .usage]),
+        ("Connect", [.connectors, .integrations, .routines, .history]),
+        ("System", [.voice, .shortcuts, .faceID, .privacy, .updates, .advanced]),
+    ]
+}
+
+/// A white SF Symbol on a colored rounded square, as in System Settings.
+struct SettingsIconTile: View {
+    let symbol: String
+    let tint: Color
+    var size: CGFloat = 22
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+            .fill(tint.gradient)
+            .overlay(Image(systemName: symbol).font(.system(size: size * 0.55, weight: .semibold)).foregroundStyle(.white))
+            .frame(width: size, height: size)
+            .shadow(color: .black.opacity(0.12), radius: 0.5, y: 0.5)
+    }
+}
+
 @MainActor
 final class SettingsNavigation: ObservableObject {
     @Published var section: SettingsSection = .general
@@ -68,28 +138,54 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsSection.allCases, selection: Binding<SettingsSection?>(
-                get: { navigation.section }, set: { if let value = $0 { navigation.section = value } })) { section in
-                Label(section.title, systemImage: section.symbol).tag(section)
-                    .padding(.vertical, 5)
+            List(selection: Binding<SettingsSection?>(
+                get: { navigation.section }, set: { if let value = $0 { navigation.section = value } })) {
+                ForEach(SettingsSection.groups, id: \.0) { group in
+                    Section(group.0) {
+                        ForEach(group.1) { section in
+                            Label {
+                                Text(section.title)
+                            } icon: {
+                                SettingsIconTile(symbol: section.symbol, tint: section.tint)
+                            }
+                            .tag(section)
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
             }
             .scrollContentBackground(.hidden)
             .background(SettingsPalette.sidebar(scheme))
             .navigationTitle("IVY")
             .navigationSplitViewColumnWidth(min: 185, ideal: 210, max: 260)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("IVY \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(.caption.bold())
-                Text("Your Mac. Your assistant.").font(.caption).foregroundStyle(.secondary)
-            }.padding().frame(maxWidth: .infinity, alignment: .leading)
-                .background(SettingsPalette.sidebar(scheme))
+            HStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("IVY \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(.caption.bold())
+                    Text("Your Mac. Your assistant.").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SettingsPalette.sidebar(scheme))
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Label(navigation.section.title, systemImage: navigation.section.symbol)
-                        .font(.title2.bold())
+                HStack(spacing: 14) {
+                    SettingsIconTile(symbol: navigation.section.symbol, tint: navigation.section.tint, size: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(navigation.section.title).font(.title2.bold())
+                        Text(navigation.section.subtitle).font(.callout).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Text(commandProvider.displayName).font(.caption).foregroundStyle(.secondary)
-                }.padding(24)
+                    Label(commandProvider.displayName, systemImage: commandProvider == .local ? "cpu" : "cloud")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(.quaternary))
+                        .help("Model used for commands")
+                }
+                .padding(.horizontal, 24).padding(.vertical, 18)
+                .animation(.easeOut(duration: 0.15), value: navigation.section)
                 Divider()
                 detail
                     .scrollContentBackground(.hidden)

@@ -28,6 +28,13 @@ final class NotchViewModel: ObservableObject {
     @Published var assistantBodyHeight: CGFloat = 60
     @Published var isHovering = false
     @Published var isDropTargeted = false
+    @Published var isAirDropTargeted = false
+    /// The shelf's AirDrop zone in top-left window coordinates, reported by SwiftUI so the
+    /// AppKit drop target can tell the two drop areas apart.
+    var airDropZone: CGRect?
+    /// Keeps the dashboard open briefly after a drop so the pointer resting outside the
+    /// panel doesn't close it before the new file is visible.
+    private var dropGraceUntil = Date.distantPast
     @Published var workspaceVisible = false
     @Published private(set) var writingAssistVisible = false
     @Published private(set) var steps: [ActionStep] = []
@@ -451,10 +458,16 @@ final class NotchViewModel: ObservableObject {
     }
 
     func closeDashboard() {
-        guard mode == .dashboard, !isDropTargeted, !isPinnedForDemo else { return }
+        guard mode == .dashboard, !isDropTargeted, !isAirDropTargeted, !isPinnedForDemo, Date() >= dropGraceUntil,
+              !NotchDropTarget.isDraggingFiles else { return }
         env.battery.setVisible(false)
         env.music.endLiveUpdates()
         mode = .closed
+    }
+
+    func didReceiveDrop(showShelf: Bool = true) {
+        dropGraceUntil = Date().addingTimeInterval(1.5)
+        if showShelf, mode == .dashboard { tab = .shelf }
     }
 
     // MARK: - Dismissal

@@ -55,6 +55,7 @@ final class NotchWindowController {
     private var monitors: [Any] = []
     private var hoverOpenWork: DispatchWorkItem?
     private var hoverCloseWork: DispatchWorkItem?
+    private var dropTarget: NotchDropTarget?
 
     static let canvasSize = CGSize(width: NotchLayout.dashboardWidth + NotchLayout.shadowMargin * 2,
                                    height: 40 + NotchLayout.maxAssistantBody + NotchLayout.shadowMargin + 40)
@@ -66,6 +67,9 @@ final class NotchWindowController {
         hosting.sizingOptions = []
         container = NotchContainerView(content: hosting)
         panel.contentView = container
+        let dropTarget = NotchDropTarget(model: model)
+        self.dropTarget = dropTarget
+        container.dropTarget = dropTarget
 
         model.onKeyFocusChange = { [weak self] focus in self?.setKeyFocus(focus) }
         model.objectWillChange
@@ -126,7 +130,9 @@ final class NotchWindowController {
     /// Springs the Core Animation notch shape to the model's current size.
     private func updateShape(animated: Bool) {
         if model.workspaceVisible { panel.orderOut(nil); return }
-        panel.orderFrontRegardless()
+        // Re-ordering on every model change makes the window server restack the panel
+        // (and, mid-drag, can drop the drag destination); only bring it back when hidden.
+        if !panel.isVisible { panel.orderFrontRegardless() }
         container.apply(NotchContainerView.Spec(size: model.shapeSize, topRadius: model.topRadius,
                                                 bottomRadius: model.bottomRadius, band: model.geometry.topBandHeight,
                                                 isOpen: model.isOpen),
@@ -150,9 +156,12 @@ final class NotchWindowController {
         return geometry.panelFrame(size: CGSize(width: width, height: geometry.topBandHeight)).insetBy(dx: -4, dy: -2)
     }
 
-    /// The panel only takes mouse events while the pointer is over the visible shape.
+    /// The panel only takes mouse events while the pointer is over the visible shape. While
+    /// files are being dragged it keeps a margin, so a drop on the edge lands in the shelf
+    /// instead of in the window underneath (Finder would move the file there).
     private func updateMouseHandling(location: CGPoint = NSEvent.mouseLocation) {
-        let inside = !model.workspaceVisible && model.isOpen && shapeRect.contains(location)
+        let target = NotchDropTarget.isDraggingFiles ? shapeRect.insetBy(dx: -24, dy: -24) : shapeRect
+        let inside = !model.workspaceVisible && model.isOpen && target.contains(location)
         if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
     }
 
@@ -203,7 +212,9 @@ final class NotchWindowController {
             }
             if dragging {
                 // Dragging files onto the notch opens the shelf.
-                if (NSPasteboard(name: .drag).types ?? []).contains(.fileURL) {
+                if NotchDropTarget.isDraggingFiles {
+                    hoverCloseWork?.cancel()
+                    hoverCloseWork = nil
                     model.openDashboard(tab: .shelf)
                     panel.ignoresMouseEvents = false
                 }
