@@ -156,7 +156,10 @@ struct AssistantBody: View {
                 ListeningView(level: model.audioLevel, shortcut: model.env.settings.activationShortcut)
             default:
                 RingingView(service: model.env.timers) { model.stopButtonTapped() }
-                if !model.query.isEmpty {
+                if let file = model.attachedFile {
+                    AttachedFileChip(url: file)
+                }
+                if !model.query.isEmpty, !model.isFileOpeningQuestion {
                     QueryView(text: model.query)
                 }
                 statusSection
@@ -202,5 +205,29 @@ struct AssistantBody: View {
         case .openPrivacy?: return "Open Privacy Settings"
         case nil: return nil
         }
+    }
+}
+
+/// The file a notch chat is about: thumbnail, name and details; click to Quick Look.
+struct AttachedFileChip: View {
+    let url: URL
+
+    var body: some View {
+        HStack(spacing: 10) {
+            FileThumbnail(url: url, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1).truncationMode(.middle)
+                Text(FileDetails.summary(url)).font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.07)))
+        .contentShape(Rectangle())
+        .onTapGesture { ShelfQuickLook.shared.show([url], selecting: url) }
+        .help("Preview \(url.lastPathComponent)")
     }
 }

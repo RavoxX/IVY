@@ -12,7 +12,8 @@ import os
 ///
 /// Commands: submit(text), text, dashboard(tab), dismiss, audio(path) — the latter runs a
 /// recorded file through the same Whisper → agent path as the microphone — and
-/// faceid(state: armed|scanning|blink|success|failure|hide) to preview the Face ID overlay.
+/// faceid(state: armed|scanning|blink|success|failure|hide) to preview the Face ID overlay,
+/// and askfile(path) to start a shelf "Ask IVY about this file" chat.
 /// Not compiled into Release builds.
 @MainActor
 enum DebugBridge {
@@ -46,6 +47,8 @@ enum DebugBridge {
             presentDemo(info["scene"] as? String ?? "", env: env)
         case "settings":
             env.openSettings(section: info["section"] as? String)
+        case "askfile":
+            if let path = info["path"] as? String { notch.askAbout(URL(fileURLWithPath: path)) }
         case "faceid":
             previewFaceID(info["state"] as? String ?? "scanning", overlay: env.faceUnlock.overlay)
         case "audio":

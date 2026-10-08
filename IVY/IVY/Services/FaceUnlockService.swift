@@ -18,6 +18,10 @@ final class FaceUnlockService: ObservableObject {
     @Published private(set) var templates: [FaceTemplate] = []
     @Published private(set) var hasPassword = false
     @Published private(set) var status = ""
+    /// Shows a notice in the notch; used after unlocking when Face ID was on but couldn't run.
+    var onSetupNeeded: ((String) -> Void)?
+    /// Why Face ID skipped the current lock, reported once the user unlocks by password.
+    private var skippedReason: String?
     @Published private(set) var isScanning = false
     @Published private(set) var isEnrolling = false
 
@@ -185,6 +189,10 @@ final class FaceUnlockService: ObservableObject {
             overlay.detachFromLockScreen()
             if overlay.phase != .success { overlay.hide() }
             cancelScan()
+            if let reason = skippedReason {
+                skippedReason = nil
+                onSetupNeeded?("Face ID didn't run on the lock screen. \(reason) (Settings ▸ Face ID)")
+            }
         case .willSleep:
             pendingTrigger?.cancel()
             cancelScan()
@@ -210,9 +218,13 @@ final class FaceUnlockService: ObservableObject {
     private func armIfPossible(autoScan: Bool) {
         guard isEnabled, !isEnrolling, !monitor.isSleeping, LockScreenMonitor.isScreenLocked else { return }
         guard isReady, FaceCamera.isAuthorized, PasswordTyper.isTrusted else {
-            if isEnabled { Log.faceID.info("Face ID not armed: \(self.missingRequirement ?? "", privacy: .public)") }
+            let reason = missingRequirement ?? "Face ID isn't set up."
+            skippedReason = reason
+            status = "Face ID didn't run on the last lock. \(reason)"
+            Log.faceID.notice("Face ID not armed: \(reason, privacy: .public)")
             return
         }
+        skippedReason = nil
         guard !isScanning else { return }
         if autoScan, ProcessInfo.processInfo.systemUptime - lastScanStart > 2 {
             startScan(.unlock)
@@ -264,8 +276,22 @@ final class FaceUnlockService: ObservableObject {
         let templates = self.templates
         let threshold = settings.faceMatchStrictness.threshold
         let requireLiveness = settings.bool(.faceUnlockLiveness)
-        let start = ProcessInfo.processInfo.systemUptime
-        var judge = FaceScanJudge(startedAt: start, duration: max(3, min(15, settings.double(.faceUnlockScanSeconds))))
+        let duration = max(3, min(15, settings.double(.faceUnlockScanSeconds)))
+        // The scan window starts with the first camera frame, so camera warm-up (often
+        // most of a second right after wake) doesn't eat into it.
+        let warmUpDeadline = ProcessInfo.processInfo.systemUptime + 4
+        while camera.latestFrame() == nil, ProcessInfo.processInfo.systemUptime < warmUpDeadline,
+              generation == scanGeneration, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        guard generation == scanGeneration, !Task.isCancelled else { return }
+        guard camera.latestFrame() != nil else {
+            status = "The camera didn't deliver any frames."
+            Log.faceID.error("No camera frames within 4 s")
+            overlay.finish(success: false, message: "Camera Unavailable", thenArm: mode == .unlock && LockScreenMonitor.isScreenLocked)
+            return
+        }
+        var judge = FaceScanJudge(startedAt: ProcessInfo.processInfo.systemUptime, duration: duration)
         var liveness = LivenessEvaluator()
         var lastFrame: UInt64 = 0
         var matchedName: String?

@@ -76,6 +76,38 @@ struct FaceIDSettings: View {
             }
 
             if service.isVaultUnlocked {
+                Section {
+                    if service.hasPassword {
+                        HStack {
+                            Label("Password saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                            Spacer()
+                            Button("Remove", role: .destructive) { service.removePassword() }
+                        }
+                    }
+                    HStack {
+                        SecureField(service.hasPassword ? "Replace password" : "Mac login password", text: $password)
+                            .onSubmit(savePassword)
+                        Button(savingPassword ? "Checking…" : "Save", action: savePassword)
+                            .disabled(password.isEmpty || savingPassword)
+                    }
+                    if let passwordMessage {
+                        Text(passwordMessage).font(.caption).foregroundStyle(.red)
+                    }
+                    Text("IVY checks the password against your account before saving it. Update it here whenever you change your login password.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("Login password")
+                        if !service.hasPassword {
+                            Text("Required")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Capsule().fill(.orange))
+                        }
+                    }
+                }
+
                 Section("Faces") {
                     ForEach(service.templates) { template in
                         HStack {
@@ -95,27 +127,6 @@ struct FaceIDSettings: View {
                         enrollingName = service.templates.isEmpty ? "Me" : "Alternate appearance \(service.templates.count)"
                     }
                     Text("Only face embeddings (numbers) are stored, never images. Add an alternate appearance for glasses or different lighting.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                Section("Login password") {
-                    if service.hasPassword {
-                        HStack {
-                            Label("Password saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                            Spacer()
-                            Button("Remove", role: .destructive) { service.removePassword() }
-                        }
-                    }
-                    HStack {
-                        SecureField(service.hasPassword ? "Replace password" : "Mac login password", text: $password)
-                            .onSubmit(savePassword)
-                        Button(savingPassword ? "Checking…" : "Save", action: savePassword)
-                            .disabled(password.isEmpty || savingPassword)
-                    }
-                    if let passwordMessage {
-                        Text(passwordMessage).font(.caption).foregroundStyle(.red)
-                    }
-                    Text("IVY checks the password against your account before saving it. Update it here whenever you change your login password.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

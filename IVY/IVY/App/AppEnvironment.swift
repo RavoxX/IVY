@@ -126,6 +126,7 @@ final class AppEnvironment {
         let shortcutsService = self.shortcutsService
         Task.detached(priority: .utility) { _ = await shortcutsService.list() }
         nudges.onNudge = { [weak self] nudge in self?.notch.showNudge(nudge) }
+        faceUnlock.onSetupNeeded = { [weak self] text in self?.notch.showNudge(.init(symbol: "faceid", text: text)) }
         nudges.start()
     }
 

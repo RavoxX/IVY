@@ -283,7 +283,7 @@ struct ShelfView: View {
                     HStack(spacing: 6) {
                         ForEach(items.prefix(visibleCount), id: \.self) { url in
                             ShelfItemView(url: url, all: items,
-                                          ask: { model.env.openSettings(section: "assistant"); model.env.workspaceAttachments = [url] },
+                                          ask: { model.askAbout(url) },
                                           remove: { withAnimation(.spring(response: 0.3)) { shelf.remove(url) } })
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
                         }

@@ -150,7 +150,8 @@ bash IVY/IVY/Resources/Engine/setup_runtime.sh
 | Hold <kbd>⌘</kbd><kbd>⌥</kbd> 0.5 s | IVY opens and listens. Release to ask. |
 | Hold <kbd>⌘</kbd><kbd>⌥</kbd>, release <kbd>⌘</kbd>, press <kbd>⌘</kbd> again | Text field opens. Type and press <kbd>Return</kbd>. |
 | Hover the notch | Dashboard: media player, today at a glance, shelf, history, battery, settings. |
-| Drag files onto the notch | Opens the shelf; drop to keep them handy or AirDrop them. |
+| Drag files onto the notch | Opens the shelf; drop to keep them handy or AirDrop them. Shelf files show Quick Look previews; click to preview, double-click to open. |
+| Right-click a shelf file ▸ **Ask IVY about this file** | A small chat opens in the notch and IVY describes the file right away; type follow-up questions underneath. |
 | <kbd>Esc</kbd> / click outside | Closes IVY. |
 
 Try:
@@ -199,10 +200,10 @@ Off by default. Set it up in **Settings ▸ Face ID**:
 1. Allow **Camera** and **Accessibility** (Accessibility lets IVY type your password on the lock screen).
 2. **Create with Touch ID** the encrypted Face ID store. Templates and the password are sealed with AES-GCM under a random key that is wrapped by a Secure Enclave key requiring Touch ID or your account password. IVY asks once after each launch, because no prompt can appear on the lock screen; the key then stays in memory only.
 3. **Set Up Face ID**: look straight at the camera, then move your head slowly in a circle until the ring fills, like on iPhone. Only 512-number ArcFace embeddings are stored, never images. Add alternate appearances (glasses, lighting) and switch any of them off.
-4. Save your **login password**. IVY verifies it against your account first, so a typo is never typed on the lock screen.
+4. Save your **login password**: the setup sheet asks for it right after your face is captured (it's also under **Login password**, marked *Required* until saved). IVY verifies it against your account first, so a typo is never typed on the lock screen. Without it Face ID can't unlock.
 5. Turn on **Unlock this Mac with Face ID** and confirm the security notice.
 
-When the Mac wakes on the lock screen, the notch grows into a Face ID panel: the face mark turns gently while scanning ("Look at your Mac" or "Blink to unlock" if needed), then the brackets close into a ring with a checkmark and the lock opens; an unknown face makes the mark shake "no". On lock without a scan, a slim pill with a lock and the Face ID mark waits in the notch; hover it to scan. IVY reports success only after macOS shows the session unlocked. **Test Face ID in the Notch** checks recognition at any time without typing anything. Recognition runs fully on-device (Vision for detection and landmarks, a Core ML ArcFace model for identity); camera frames stay in memory, and the camera runs only during setup and scans.
+When the Mac wakes on the lock screen, the notch grows into a Face ID panel: the face mark turns gently while scanning ("Look at your Mac" or "Blink to unlock" if needed), then the brackets close into a ring with a checkmark and the lock opens; an unknown face makes the mark shake "no". On lock without a scan, a slim pill with a lock and the Face ID mark waits in the notch; hover it to scan. IVY reports success only after macOS shows the session unlocked. **Test Face ID in the Notch** checks recognition at any time without typing anything. If Face ID is on but something is missing (password, permission, the Touch ID unlock after launch), IVY tells you in the notch right after you unlock with your password. The scan window starts with the first camera frame, so camera warm-up after wake doesn't count against it. Recognition runs fully on-device (Vision for detection and landmarks, a Core ML ArcFace model for identity); camera frames stay in memory, and the camera runs only during setup and scans.
 
 Match strictness (Relaxed / Standard / Strict), the liveness check (blink or head turn with real depth parallax), scan duration and triggers (on wake by default; optionally right after the screen locks) are configurable. **Delete Face ID Data** removes faces, the password and keys. The lock-screen panel uses a private window-server (SkyLight) call; if a macOS update removes it, unlocking still works without the animation.
 
@@ -318,7 +319,7 @@ Cloud text streams immediately. Native tool arguments stay buffered until a comp
 
 Your request, recent conversation context, tool schemas and tool results are sent directly over HTTPS to the selected provider. Depending on what you ask, this can include clipboard text, mail metadata, reminders, calendar events and file-search results. Microphone audio and TTS remain local. Selecting a provider, saving a key or opening the notch sends no background test/warm-up requests; instant commands that need no model still run locally. Switch back to **Local (MLX)** to keep model processing on your Mac.
 
-The adapters use the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/function-calling), [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create) and [Gemini generateContent API](https://ai.google.dev/gemini-api/docs/function-calling). OpenAI requests set `store: false`; provider data policies still apply to cloud requests. Keys are never stored in UserDefaults, history or logs.
+The adapters use the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/function-calling), [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create) and [Gemini generateContent API](https://ai.google.dev/gemini-api/docs/function-calling). OpenAI requests set `store: false`; Gemini requests keep thinking low (`thinkingLevel: low` on Gemini 3, no thinking budget on 2.5 Flash) so short notch answers aren't delayed; provider data policies still apply to cloud requests. Keys are never stored in UserDefaults, history or logs.
 
 ## Integrations
 
@@ -335,6 +336,8 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 **Web search** — `web_search` queries DuckDuckGo's HTML endpoint (Wikipedia as a fallback), reads up to three pages concurrently, associates excerpts with URLs and retrieval dates, and asks the research model for a cited answer. Sources are shown as a card. **Weather** comes from Open-Meteo. There are no API keys, and only the query is sent. Both can be switched off (Settings ▸ Integrations ▸ Web).
 
 **Timers** — `TimerService` schedules a single timer for the next deadline (zero idle cost). The closed notch shows the countdown, and a finished timer pops up with a Stop button and a sound.
+
+**Ask IVY about a file** — IVY's language model reads text, so files are described on-device first: images with Apple Vision (scene labels, text, people, animals, QR codes, size and capture date; never location), PDFs and text files by their text, other files by name, kind and size. That description is attached to the question; follow-ups in the same notch chat stay tied to the file. With cloud AI selected, the description (not the image) goes to your provider.
 
 **Files** — `file_search` builds an `NSMetadataQuery` (Spotlight) from a name, a kind (PDF, image, spreadsheet…) and a date window, inside your home folder or a named folder. Results show as a card; click to open, drag out, or add them to the shelf.
 

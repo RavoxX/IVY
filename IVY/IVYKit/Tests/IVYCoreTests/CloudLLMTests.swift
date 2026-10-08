@@ -38,6 +38,20 @@ struct CloudLLMTests {
     private let schema: JSONValue = ["type": "function", "function": ["name": "lookup", "description": "Read data",
         "parameters": ["type": "object", "properties": ["value": ["type": "string"]], "required": ["value"]]]]
 
+    @Test("Gemini requests keep thinking low so short answers come back fast")
+    func geminiThinkingLevel() throws {
+        func thinking(_ model: String) throws -> JSONValue? {
+            let configuration = CloudModelConfiguration(provider: .gemini, model: model, apiKey: "test-secret")
+            let request = try CloudProviderCodec.request(configuration, messages: [.user("Describe the file")], tools: [schema], options: .init())
+            return try body(request)["generationConfig"]?["thinkingConfig"]
+        }
+        #expect(try thinking("gemini-3.5-flash-lite") == ["thinkingLevel": "low"])
+        #expect(try thinking("gemini-3.8-flash") == ["thinkingLevel": "low"])
+        #expect(try thinking("gemini-2.5-flash") == ["thinkingBudget": 0])
+        #expect(try thinking("gemini-2.5-pro") == nil)
+        #expect(try body(CloudProviderCodec.request(config(.gemini), messages: [.user("Hi")], tools: [], options: .init()))["generationConfig"]?["maxOutputTokens"] != nil)
+    }
+
     @Test("Each provider uses its native endpoint, authentication and schema")
     func wireContracts() throws {
         for provider in [AIProvider.openAI, .claude, .gemini] {

@@ -2,6 +2,17 @@ import Foundation
 
 /// Provider wire formats are isolated from the agent's validation and security policy.
 enum CloudProviderCodec {
+    /// Gemini Flash models think dynamically by default, which can add many seconds before a
+    /// short notch answer. IVY's requests are commands and brief answers, so thinking is kept
+    /// low: `thinkingLevel` for Gemini 3, no thinking budget for 2.5 Flash (2.5 Pro can't
+    /// turn it off and keeps its default). Other models are left unchanged.
+    static func geminiThinking(for model: String) -> JSONValue? {
+        let id = model.lowercased()
+        if id.hasPrefix("gemini-3") { return ["thinkingLevel": "low"] }
+        if id.hasPrefix("gemini-2.5-flash") { return ["thinkingBudget": 0] }
+        return nil
+    }
+
     static func request(_ config: CloudModelConfiguration, messages: [ChatMessage], tools: [JSONValue],
                         options: GenerationOptions) throws -> URLRequest {
         if let error = config.validationError { throw error }
@@ -106,8 +117,10 @@ enum CloudProviderCodec {
             }
         case .gemini:
             url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(config.model):generateContent")!
+            var generation: [String: JSONValue] = ["maxOutputTokens": .number(Double(maxTokens))]
+            if let thinking = geminiThinking(for: config.model) { generation["thinkingConfig"] = thinking }
             body = ["systemInstruction": ["parts": [["text": .string(system)]]], "contents": .array(turns),
-                    "generationConfig": ["maxOutputTokens": .number(Double(maxTokens))]]
+                    "generationConfig": .object(generation)]
             if !functions.isEmpty {
                 body["tools"] = [["functionDeclarations": .array(functions.map { function in
                     var declaration = function

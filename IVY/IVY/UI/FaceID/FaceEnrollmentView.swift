@@ -28,7 +28,7 @@ final class FaceEnrollmentSession: ObservableObject {
         switch stage {
         case .starting: return "Starting camera…"
         case .saving: return "Saving…"
-        case .done: return "Face ID is set up."
+        case .done: return "Your face is set up."
         case .failed(let message): return message
         case .scanning:
             if !faceVisible { return "Position your face in the circle." }
@@ -117,8 +117,11 @@ final class FaceEnrollmentSession: ObservableObject {
 /// fill as you move your head, like setting up Face ID on iPhone.
 struct FaceEnrollmentView: View {
     @StateObject private var session: FaceEnrollmentSession
-    private let service: FaceUnlockService
+    @ObservedObject private var service: FaceUnlockService
     let onClose: () -> Void
+    @State private var password = ""
+    @State private var passwordError: String?
+    @State private var savingPassword = false
 
     init(service: FaceUnlockService, name: String, onClose: @escaping () -> Void) {
         _session = StateObject(wrappedValue: FaceEnrollmentSession(service: service, name: name))
@@ -155,8 +158,30 @@ struct FaceEnrollmentView: View {
                 .contentTransition(.opacity)
                 .animation(.easeOut(duration: 0.2), value: session.instruction)
 
+            if needsPassword {
+                // Face ID can't unlock without it, so finish setup here instead of leaving
+                // the step for a section further down in Settings.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Last step: your Mac login password").font(.headline)
+                    SecureField("Login password for \(NSUserName())", text: $password)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(savePassword)
+                    Text(passwordError ?? "IVY checks it against your account, then stores it encrypted to type it on the lock screen.")
+                        .font(.caption)
+                        .foregroundStyle(passwordError == nil ? Color.secondary : Color.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             HStack {
-                if session.stage == .done {
+                if needsPassword {
+                    Button("Later") { close() }.keyboardShortcut(.cancelAction)
+                        .help("Face ID can't unlock your Mac until the password is saved")
+                    Button(savingPassword ? "Checking…" : "Save and Finish", action: savePassword)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(password.isEmpty || savingPassword)
+                } else if session.stage == .done {
                     Button("Done") { close() }.keyboardShortcut(.defaultAction)
                 } else {
                     Button("Cancel", role: .cancel) { close() }.keyboardShortcut(.cancelAction)
@@ -165,11 +190,29 @@ struct FaceEnrollmentView: View {
         }
         .padding(28)
         .frame(width: 400)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: needsPassword)
         .onAppear { session.start() }
         .onDisappear { session.stop() }
     }
 
     private var sessionCamera: AVCaptureSession { service.camera.session }
+
+    private var needsPassword: Bool { session.stage == .done && !service.hasPassword }
+
+    private func savePassword() {
+        guard !password.isEmpty, !savingPassword else { return }
+        savingPassword = true
+        let candidate = password
+        Task {
+            let error = await service.savePassword(candidate)
+            savingPassword = false
+            passwordError = error
+            if error == nil {
+                password = ""
+                close()
+            }
+        }
+    }
 
     private func close() {
         session.stop()
