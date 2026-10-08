@@ -188,6 +188,22 @@ Writing actions preserve paragraph and manual line breaks, blank lines, indentat
 
 **AI ▸ Models by task** sets separate models for Grammar & rewriting and Translation. Cloud writing actions send only the selected text and instruction, not the entire field.
 
+## Face ID (unlock your Mac)
+
+> **Not as secure as Apple's Face ID or Touch ID.** A MacBook camera sees a flat 2D image; there is no depth sensor. The liveness check stops printed photos and still images, but a video of you, or someone who looks very similar, may unlock your Mac. macOS has no API that lets an app approve a login, so IVY stores your login password and types it on the lock screen. Use it as a convenience only.
+
+Off by default. Set it up in **Settings ▸ Face ID**:
+
+1. Allow **Camera** and **Accessibility** (Accessibility lets IVY type your password on the lock screen).
+2. **Create with Touch ID** the encrypted Face ID store. Templates and the password are sealed with AES-GCM under a random key that is wrapped by a Secure Enclave key requiring Touch ID or your account password. IVY asks once after each launch, because no prompt can appear on the lock screen; the key then stays in memory only.
+3. **Set Up Face ID**: look straight at the camera, then move your head slowly in a circle until the ring fills, like on iPhone. Only 512-number ArcFace embeddings are stored, never images. Add alternate appearances (glasses, lighting) and switch any of them off.
+4. Save your **login password**. IVY verifies it against your account first, so a typo is never typed on the lock screen.
+5. Turn on **Unlock this Mac with Face ID** and confirm the security notice.
+
+When the Mac wakes on the lock screen, the notch grows into a Face ID panel: the face mark turns gently while scanning ("Look at your Mac" or "Blink to unlock" if needed), then the brackets close into a ring with a checkmark and the lock opens; an unknown face makes the mark shake "no". On lock without a scan, a slim pill with a lock and the Face ID mark waits in the notch; hover it to scan. IVY reports success only after macOS shows the session unlocked. **Test Face ID in the Notch** checks recognition at any time without typing anything. Recognition runs fully on-device (Vision for detection and landmarks, a Core ML ArcFace model for identity); camera frames stay in memory, and the camera runs only during setup and scans.
+
+Match strictness (Relaxed / Standard / Strict), the liveness check (blink or head turn with real depth parallax), scan duration and triggers (on wake by default; optionally right after the screen locks) are configurable. **Delete Face ID Data** removes faces, the password and keys. The lock-screen panel uses a private window-server (SkyLight) call; if a macOS update removes it, unlocking still works without the animation.
+
 ## Full workspace and daily workflows
 
 Open **Assistant Window** from the IVY menu, or expand a notch response; a running task continues in the window. New conversation clears the active conversation and structured tool references. History searches the last 50 stored requests and answers.
@@ -347,6 +363,7 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 - No tool accepts free-form shell, AppleScript or terminal input.
 - Commands come from a fixed allowlist (`CommandAllowlist`); the model can only choose an ID.
 - Destructive file operations are limited to files inside your home folder, never top-level or `~/Library` paths, and use the Trash instead of deleting.
+- Face ID is off by default and requires an explicit acknowledgement that it is less secure than Apple's Face ID; see [Face ID](#face-id-unlock-your-mac).
 
 ## Permissions
 
@@ -360,7 +377,8 @@ Spotify silently substitutes region-locked tracks, so IVY plays candidates one b
 | Automation → Mail | “Any new mail?” | For mail |
 | Full Disk Access | Reading the active Focus | Optional |
 | Automation → System Events | Dark mode toggle | For dark mode |
-| Accessibility | Selected-text context and editing | For writing assistant / selected-text context; optional otherwise |
+| Accessibility | Selected-text context and editing; typing your password for Face ID | For writing assistant / selected-text context / Face ID; optional otherwise |
+| Camera | Face ID setup and lock-screen recognition | For Face ID |
 
 IVY is not sandboxed because it launches its local engine, Terminal and Claude Code. It uses the hardened runtime.
 
@@ -368,6 +386,7 @@ IVY is not sandboxed because it launches its local engine, Terminal and Claude C
 
 - Audio stays in memory, goes to a private temp file for Whisper, and is deleted right after transcription.
 - Prompts, transcripts and answers are processed locally by default. With cloud AI selected, requests, recent context and tool results are sent to that provider; audio stays local. There's no analytics or telemetry.
+- Face ID frames are analyzed in memory and never saved; only encrypted embeddings and your encrypted login password are stored in `~/Library/Application Support/IVY/FaceID`.
 - History is a small local JSON file (last 50 entries) that you can switch off or clear.
 - Logs use `os.Logger` with prompts marked private. View them with `log stream --predicate 'subsystem == "com.ravoxx.IVY"'`.
 - Network is used for model downloads, explicitly selected cloud AI, song lookup, web/weather, user-triggered connectors, explicit update checks/downloads, and Spotify/Claude Code. Service logos are bundled offline.
@@ -378,7 +397,7 @@ IVY is not sandboxed because it launches its local engine, Terminal and Claude C
 cd IVY/IVYKit && swift test
 ```
 
-Also covers SSE event boundaries, partial-tool rejection, editable-field exclusions, Unicode replacement, per-task routing, usage, versions, MCP transport/pagination, schemas and failed-step recovery. Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry and date parsing. In Xcode, ⌘U runs the same suite.
+Also covers SSE event boundaries, partial-tool rejection, editable-field exclusions, Unicode replacement, per-task routing, usage, versions, MCP transport/pagination, schemas and failed-step recovery. Covers the gesture state machine (hold → voice, release/re-press → text, quick taps, single modifiers, key chords, key repeat), command routing, tool-call parsing, the agent loop with a fake model, confirmation for high-risk tools, chained commands, file-search/mail/clipboard/dictionary parsing, CSV ⇄ JSON, Shortcut matching, Focus parsing, the energy policy, reminder transformations, settings persistence, cloud provider wire formats, tool-call continuations/signatures, credential errors, request cancellation and no cloud warm-up, history, allowlist/path validation, notch geometry, date parsing, and Face ID matching, enrollment progress, liveness, scan decisions and landmark alignment. In Xcode, ⌘U runs the same suite.
 
 For installer integration checks on macOS, build Debug and run `python3 scripts/test_updater.py --debug-app /path/to/Debug/IVY.app --previous-app /path/to/older/IVY.app`. The script copies signed bundles into disposable folders, tests installer readiness, actual replacement/restart and rejection of a damaged update, and leaves the installed app untouched. Pass an older Debug build whose settings preview does not acknowledge startup with `--no-ack-app` to also verify rollback. The new app launches in an isolated settings preview with no shortcuts or model calls.
 
@@ -392,6 +411,8 @@ Run `/path/to/Debug/IVY.app/Contents/MacOS/IVY --check-notch-presentation` for p
 - Mail looks at the newest 150 inbox messages and matches senders and subjects, not message bodies.
 - Web search scrapes DuckDuckGo's HTML page, which can rate-limit heavy use; IVY then falls back to Wikipedia.
 - Headless Claude Code sessions need the CLI to be logged in (`claude` → `/login`).
+- Face ID uses a 2D camera, so it can be fooled by a video of you; it unlocks by typing your stored password and needs one Touch ID prompt after each IVY launch. FileVault still requires your password after a restart.
+- The bundled ArcFace weights come from InsightFace, which licenses its pretrained models for non-commercial research use; see `docs/third-party/face-id.md`.
 - Without Input Monitoring, ⌘⌥ chords combined with other keys (e.g. ⌘⌥Esc) can't be told apart from a hold, so grant it for the best experience.
 
 ## Troubleshooting

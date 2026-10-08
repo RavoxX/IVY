@@ -12,6 +12,8 @@
 	<string>IVY reads your calendar and creates or edits events when you ask. With cloud AI enabled, requested event details may be sent to your selected provider.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>IVY reads your calendar when you ask about your schedule.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>IVY uses the camera only for Face ID when you turn it on: to set up your face and to recognize you on the lock screen. Frames are analyzed on your Mac in memory and never stored or uploaded.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>IVY listens while you hold its shortcut so you can speak questions. Audio is transcribed locally on your Mac and never stored or uploaded.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

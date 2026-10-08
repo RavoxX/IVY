@@ -11,7 +11,8 @@ import os
 ///         deliverImmediately: true)'
 ///
 /// Commands: submit(text), text, dashboard(tab), dismiss, audio(path) — the latter runs a
-/// recorded file through the same Whisper → agent path as the microphone.
+/// recorded file through the same Whisper → agent path as the microphone — and
+/// faceid(state: armed|scanning|blink|success|failure|hide) to preview the Face ID overlay.
 /// Not compiled into Release builds.
 @MainActor
 enum DebugBridge {
@@ -45,6 +46,8 @@ enum DebugBridge {
             presentDemo(info["scene"] as? String ?? "", env: env)
         case "settings":
             env.openSettings(section: info["section"] as? String)
+        case "faceid":
+            previewFaceID(info["state"] as? String ?? "scanning", overlay: env.faceUnlock.overlay)
         case "audio":
             guard let path = info["path"] as? String, let samples = loadSamples(path) else { return }
             Task {
@@ -107,6 +110,18 @@ enum DebugBridge {
             notch.dismiss()
         default:
             break
+        }
+    }
+
+    /// Drives the Face ID overlay without a camera, for checking its animations.
+    private static func previewFaceID(_ state: String, overlay: FaceUnlockOverlay) {
+        switch state {
+        case "armed": overlay.arm()
+        case "scanning": overlay.beginScan()
+        case "blink": overlay.beginScan(); overlay.setHint(.blink)
+        case "success": overlay.finish(success: true, thenArm: false)
+        case "failure": overlay.finish(success: false, thenArm: false)
+        default: overlay.hide()
         }
     }
 

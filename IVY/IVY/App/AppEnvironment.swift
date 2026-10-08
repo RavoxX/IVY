@@ -41,6 +41,7 @@ final class AppEnvironment {
     let energy = EnergyMonitor()
     let textService: LLMTextService
     let glance: GlanceService
+    let faceUnlock: FaceUnlockService
     let registry = ToolRegistry()
     private(set) var agent: AgentService!
     private(set) var notch: NotchViewModel!
@@ -69,6 +70,7 @@ final class AppEnvironment {
         glance = GlanceService(settings: settings, reminders: reminders, calendar: calendar, mail: mail,
                                focus: focus, energy: energy)
         music = MusicController(spotify: spotify)
+        faceUnlock = FaceUnlockService(settings: settings)
         claudeCode = ClaudeCodeService(settings: settings)
 
         registerTools()

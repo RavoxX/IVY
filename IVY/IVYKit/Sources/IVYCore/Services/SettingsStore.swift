@@ -67,6 +67,14 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case webSearchEnabled = "integrations.webSearchEnabled"
     case mailOnDashboard = "integrations.mailOnDashboard"
 
+    // Face ID (unlock the Mac with the camera; off by default)
+    case faceUnlockEnabled = "faceID.enabled"
+    case faceUnlockOnWake = "faceID.onWake"
+    case faceUnlockOnLock = "faceID.onLock"
+    case faceUnlockStrictness = "faceID.strictness"
+    case faceUnlockLiveness = "faceID.liveness"
+    case faceUnlockScanSeconds = "faceID.scanSeconds"
+
     // Advanced
     case modelsFolder = "advanced.modelsFolder"
     case saveHistory = "advanced.saveHistory"
@@ -133,6 +141,12 @@ public final class SettingsStore: @unchecked Sendable {
         .onlineTrackLookup: true,
         .webSearchEnabled: true,
         .mailOnDashboard: true,
+        .faceUnlockEnabled: false,
+        .faceUnlockOnWake: true,
+        .faceUnlockOnLock: false, // Scanning right after a manual lock would undo it.
+        .faceUnlockStrictness: FaceMatchStrictness.standard.rawValue,
+        .faceUnlockLiveness: true,
+        .faceUnlockScanSeconds: 6.0,
         .modelsFolder: "",
         .saveHistory: true,
         .logPrompts: false,
@@ -189,6 +203,10 @@ public final class SettingsStore: @unchecked Sendable {
     public var gestureConfiguration: GestureConfiguration {
         GestureConfiguration(holdDuration: max(0.3, double(.holdDuration)),
                              textToggleWindow: max(0.2, double(.textToggleWindow)))
+    }
+
+    public var faceMatchStrictness: FaceMatchStrictness {
+        FaceMatchStrictness(rawValue: string(.faceUnlockStrictness)) ?? .standard
     }
 
     public var codingSessionMode: CodingSessionInfo.Mode {

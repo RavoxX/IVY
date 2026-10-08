@@ -20,4 +20,5 @@ public enum Log {
     public static let reminders = Logger(subsystem: subsystem, category: "Reminders")
     public static let claudeCode = Logger(subsystem: subsystem, category: "ClaudeCode")
     public static let engine = Logger(subsystem: subsystem, category: "Engine")
+    public static let faceID = Logger(subsystem: subsystem, category: "FaceID")
 }

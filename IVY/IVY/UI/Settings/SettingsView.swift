@@ -6,7 +6,7 @@ import OSLog
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case assistant, general, dashboard, ai, writing, benchmark, usage, connectors, routines, history, voice, shortcuts, integrations, privacy, updates, advanced
+    case assistant, general, dashboard, ai, writing, benchmark, usage, connectors, routines, history, voice, shortcuts, integrations, faceID, privacy, updates, advanced
     var id: String { rawValue }
 
     var title: String {
@@ -25,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .voice: return "Voice"
         case .shortcuts: return "Shortcuts"
         case .integrations: return "Integrations"
+        case .faceID: return "Face ID"
         case .privacy: return "Privacy"
         case .advanced: return "Advanced"
         }
@@ -46,6 +47,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .voice: return "waveform"
         case .shortcuts: return "command"
         case .integrations: return "puzzlepiece.extension"
+        case .faceID: return "faceid"
         case .privacy: return "hand.raised"
         case .advanced: return "wrench.and.screwdriver"
         }
@@ -119,6 +121,7 @@ struct SettingsView: View {
         case .voice: VoiceSettings(env: env, runtime: env.runtime)
         case .shortcuts: ShortcutSettings(env: env)
         case .integrations: IntegrationSettings(env: env, permissions: env.permissions, claude: env.claudeCode)
+        case .faceID: FaceIDSettings(env: env, service: env.faceUnlock)
         case .privacy: PrivacySettings(env: env, permissions: env.permissions)
         case .updates: UpdateSettings(updater: env.updater)
         case .advanced: AdvancedSettings(env: env)

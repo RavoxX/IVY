@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         env.permissions.refresh()
         env.runtime.refresh()
+        env.faceUnlock.prepareAtLaunch()
         Task { await env.claudeCode.refreshDetection() }
 
         if !env.settings.bool(.hasCompletedSetup) {
